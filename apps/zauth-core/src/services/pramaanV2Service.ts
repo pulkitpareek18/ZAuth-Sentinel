@@ -5,7 +5,7 @@ import type { AssuranceContext } from "../types/models.js";
 import { randomId, sha256 } from "../utils/crypto.js";
 import { getCache } from "./cacheService.js";
 import { signAttestationJwt } from "./keyService.js";
-import { verifyZkProof } from "./zkService.js";
+import { hexToFieldElement, verifyZkProof } from "./zkService.js";
 
 const ENROLLMENT_PREFIX = "pramaan:v2:enrollment:";
 const ENROLLMENT_TTL_SECONDS = 10 * 60;
@@ -116,6 +116,7 @@ export async function completeEnrollment(input: {
   hash1: string;
   hash2: string;
   commitmentRoot: string;
+  faceEmbedding?: string;
 }): Promise<{
   uid: string;
   did: string;
@@ -149,7 +150,7 @@ export async function completeEnrollment(input: {
   const expectedChallengeHash = sha256(`${draft.uidDraft}:${draft.zkChallenge}`);
   const verification = await verifyZkProof({
     uid: draft.uidDraft,
-    expectedChallengeHash,
+    expectedChallengeHash: config.zkVerifierMode === "real" ? hexToFieldElement(expectedChallengeHash) : expectedChallengeHash,
     zkProof: input.zkProof,
     publicSignals: input.publicSignals
   });
@@ -157,22 +158,30 @@ export async function completeEnrollment(input: {
     throw new Error(verification.reason ?? "zk_verification_failed");
   }
 
+  let zkCommitment: string | null = null;
+  if (config.zkVerifierMode === "real" && Array.isArray(input.publicSignals)) {
+    zkCommitment = String(input.publicSignals[0]);
+  }
+
   await pool.query(
-    `INSERT INTO pramaan_identity_map (uid, did, hash1, hash2, commitment_root, subject_id, tenant_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO pramaan_identity_map (uid, did, hash1, hash2, commitment_root, subject_id, tenant_id, face_embedding, embedding_version, zk_commitment)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      ON CONFLICT (uid) DO UPDATE
      SET did = EXCLUDED.did,
          hash1 = EXCLUDED.hash1,
          hash2 = EXCLUDED.hash2,
          commitment_root = EXCLUDED.commitment_root,
          subject_id = EXCLUDED.subject_id,
-         tenant_id = EXCLUDED.tenant_id`,
-    [draft.uidDraft, draft.didDraft, input.hash1, input.hash2, input.commitmentRoot, draft.subjectId, draft.tenantId]
+         tenant_id = EXCLUDED.tenant_id,
+         face_embedding = EXCLUDED.face_embedding,
+         embedding_version = EXCLUDED.embedding_version,
+         zk_commitment = EXCLUDED.zk_commitment`,
+    [draft.uidDraft, draft.didDraft, input.hash1, input.hash2, input.commitmentRoot, draft.subjectId, draft.tenantId, input.faceEmbedding ?? null, input.faceEmbedding ? 1 : null, zkCommitment]
   );
 
   await pool.query(
-    `INSERT INTO identity_commitments (uid, did, hash1, hash2, commitment_root, circuit_id, subject_id, tenant_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `INSERT INTO identity_commitments (uid, did, hash1, hash2, commitment_root, circuit_id, subject_id, tenant_id, zk_commitment)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      ON CONFLICT (uid) DO UPDATE
      SET did = EXCLUDED.did,
          hash1 = EXCLUDED.hash1,
@@ -180,7 +189,8 @@ export async function completeEnrollment(input: {
          commitment_root = EXCLUDED.commitment_root,
          circuit_id = EXCLUDED.circuit_id,
          subject_id = EXCLUDED.subject_id,
-         tenant_id = EXCLUDED.tenant_id`,
+         tenant_id = EXCLUDED.tenant_id,
+         zk_commitment = EXCLUDED.zk_commitment`,
     [
       draft.uidDraft,
       draft.didDraft,
@@ -189,7 +199,8 @@ export async function completeEnrollment(input: {
       input.commitmentRoot,
       draft.circuitId,
       draft.subjectId,
-      draft.tenantId
+      draft.tenantId,
+      zkCommitment
     ]
   );
 
@@ -229,6 +240,7 @@ export async function createProofChallenge(input: {
   proofRequestId: string;
   challenge: string;
   challengeHash: string;
+  challengeField?: string;
   circuitId: string;
   expiresAt: string;
 }> {
@@ -253,10 +265,14 @@ export async function createProofChallenge(input: {
     [proofRequestId]
   );
 
+  const challengeHash = sha256(`${input.uid}:${challenge}`);
+  const challengeField = config.zkVerifierMode === "real" ? hexToFieldElement(challengeHash) : undefined;
+
   return {
     proofRequestId,
     challenge,
-    challengeHash: sha256(`${input.uid}:${challenge}`),
+    challengeHash,
+    challengeField,
     circuitId: config.zkCircuitId,
     expiresAt: expires.rows[0]?.expires_at ?? new Date(Date.now() + 5 * 60 * 1000).toISOString()
   };
@@ -299,11 +315,22 @@ export async function submitProof(input: {
   }
 
   const expectedChallengeHash = sha256(`${request.uid}:${request.challenge}`);
+
+  let expectedCommitment: string | undefined;
+  if (config.zkVerifierMode === "real") {
+    const commitmentResult = await pool.query<{ zk_commitment: string | null }>(
+      `SELECT zk_commitment FROM pramaan_identity_map WHERE uid = $1`,
+      [request.uid]
+    );
+    expectedCommitment = commitmentResult.rows[0]?.zk_commitment ?? undefined;
+  }
+
   const verification = await verifyZkProof({
     uid: request.uid,
-    expectedChallengeHash,
+    expectedChallengeHash: config.zkVerifierMode === "real" ? hexToFieldElement(expectedChallengeHash) : expectedChallengeHash,
     zkProof: input.zkProof,
-    publicSignals: input.publicSignals
+    publicSignals: input.publicSignals,
+    expectedCommitment
   });
 
   await pool.query(
@@ -395,4 +422,75 @@ export async function getProofReceipt(verificationId: string): Promise<{
     [verificationId]
   );
   return result.rows[0] ?? null;
+}
+
+function base64ToUint8(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function cosineSimilarity(a: Uint8Array, b: Uint8Array): number {
+  if (a.length !== b.length) {
+    return 0;
+  }
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    const valA = a[i] - 128;
+    const valB = b[i] - 128;
+    dot += valA * valB;
+    normA += valA * valA;
+    normB += valB * valB;
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB);
+  if (denom === 0) {
+    return 0;
+  }
+  return dot / denom;
+}
+
+const BIOMETRIC_MATCH_THRESHOLD = 0.80;
+
+export async function verifyBiometricMatch(input: {
+  uid: string;
+  candidateEmbedding: string;
+}): Promise<{
+  matched: boolean;
+  similarity: number;
+  threshold: number;
+  reason?: string;
+}> {
+  const result = await pool.query<{ face_embedding: string | null }>(
+    `SELECT face_embedding FROM pramaan_identity_map WHERE uid = $1`,
+    [input.uid]
+  );
+  const row = result.rows[0];
+  if (!row) {
+    return { matched: false, similarity: 0, threshold: BIOMETRIC_MATCH_THRESHOLD, reason: "uid_not_found" };
+  }
+  if (!row.face_embedding) {
+    return { matched: false, similarity: 0, threshold: BIOMETRIC_MATCH_THRESHOLD, reason: "no_enrolled_embedding" };
+  }
+
+  const enrolled = base64ToUint8(row.face_embedding);
+  const candidate = base64ToUint8(input.candidateEmbedding);
+
+  if (enrolled.length !== 128 || candidate.length !== 128) {
+    return { matched: false, similarity: 0, threshold: BIOMETRIC_MATCH_THRESHOLD, reason: "invalid_embedding_length" };
+  }
+
+  const similarity = cosineSimilarity(enrolled, candidate);
+  const matched = similarity >= BIOMETRIC_MATCH_THRESHOLD;
+
+  return {
+    matched,
+    similarity: Math.round(similarity * 1000) / 1000,
+    threshold: BIOMETRIC_MATCH_THRESHOLD,
+    reason: matched ? undefined : "similarity_below_threshold"
+  };
 }

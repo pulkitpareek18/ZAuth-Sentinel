@@ -113,11 +113,19 @@ async function loadVerificationKey(): Promise<Record<string, unknown>> {
   throw lastError ?? new Error("verification_key_not_found");
 }
 
+const BN128_MASK = (1n << 253n) - 1n;
+
+export function hexToFieldElement(hex: string): string {
+  const clean = hex.startsWith("0x") ? hex.slice(2) : hex;
+  return (BigInt("0x" + clean) & BN128_MASK).toString();
+}
+
 export async function verifyZkProof(input: {
   uid: string;
   expectedChallengeHash: string;
   zkProof: unknown;
   publicSignals: unknown;
+  expectedCommitment?: string;
 }): Promise<VerificationResult> {
   const normalizedSignals = normalizePublicSignals(input.publicSignals);
   const signalsHash = sha256(JSON.stringify(canonicalize(normalizedSignals)));
@@ -171,9 +179,29 @@ export async function verifyZkProof(input: {
       };
     }
     const verified = await snarkjsModule.groth16.verify(verificationKey as any, normalizedSignals as any, normalizedProof as any);
+    if (!verified) {
+      return {
+        verified: false,
+        reason: "proof_invalid",
+        publicSignalsHash: signalsHash,
+        mode: config.zkVerifierMode
+      };
+    }
+
+    if (input.expectedCommitment) {
+      const proofCommitment = String(normalizedSignals[0]);
+      if (proofCommitment !== input.expectedCommitment) {
+        return {
+          verified: false,
+          reason: "commitment_mismatch",
+          publicSignalsHash: signalsHash,
+          mode: config.zkVerifierMode
+        };
+      }
+    }
+
     return {
-      verified,
-      reason: verified ? undefined : "proof_invalid",
+      verified: true,
       publicSignalsHash: signalsHash,
       mode: config.zkVerifierMode
     };

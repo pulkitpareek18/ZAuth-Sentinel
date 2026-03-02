@@ -28,3 +28,7 @@ restart:
 
 logs:
 	COMPOSE_PROJECT_NAME=zauth_prod docker compose -f docker/compose.base.yml -f docker/compose.prod.yml --env-file env/.env.prod logs -f
+
+zk-setup:
+	docker run --rm -v "$$(pwd)":/workspace -w /workspace node:20-bullseye \
+		bash -c "npm install -g snarkjs && bash scripts/zk-setup.sh"

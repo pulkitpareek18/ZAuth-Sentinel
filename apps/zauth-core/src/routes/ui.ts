@@ -1809,6 +1809,8 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
 
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/snarkjs@0.7.4/build/snarkjs.min.js"></script>
   <script>
     const handoffId = ${JSON.stringify(handoffId)};
     const code = ${JSON.stringify(code)};
@@ -1895,6 +1897,7 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
     let lastEventAt = 0;
     let submitting = false;
     let manualVisible = false;
+    let lastFaceEmbedding = null;
 
     const setStatus = (message, type = '') => {
       if (!statusEl) return;
@@ -2013,6 +2016,64 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
       return bytes.map((byte) => byte.toString(16).padStart(2, '0')).join('');
     }
 
+    let faceApiModelsLoaded = false;
+    async function loadFaceApiModels() {
+      if (faceApiModelsLoaded) return;
+      if (!window.faceapi) throw new Error('face-api.js not loaded');
+      const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model';
+      await Promise.all([
+        faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
+        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+      ]);
+      faceApiModelsLoaded = true;
+      log('Face recognition models loaded');
+    }
+
+    async function extractFaceEmbedding(videoElement) {
+      await loadFaceApiModels();
+      const detection = await faceapi
+        .detectSingleFace(videoElement)
+        .withFaceLandmarks()
+        .withFaceDescriptor();
+      if (!detection) throw new Error('No face detected for embedding extraction');
+      return detection.descriptor;
+    }
+
+    function quantizeEmbedding(descriptor) {
+      const quantized = new Uint8Array(128);
+      for (let i = 0; i < 128; i++) {
+        const val = Math.round(descriptor[i] * 128 + 128);
+        quantized[i] = Math.max(0, Math.min(255, val));
+      }
+      return quantized;
+    }
+
+    async function hashEmbedding(quantizedBytes) {
+      const digest = await crypto.subtle.digest('SHA-256', quantizedBytes.buffer);
+      const bytes = Array.from(new Uint8Array(digest));
+      return bytes.map((b) => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    function uint8ToBase64(uint8Array) {
+      let binary = '';
+      for (let i = 0; i < uint8Array.byteLength; i++) binary += String.fromCharCode(uint8Array[i]);
+      return btoa(binary);
+    }
+
+    async function verifyBiometricMatch(uid, embeddingBase64) {
+      const resp = await fetch('/pramaan/v2/biometric/verify', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ uid, face_embedding: embeddingBase64 })
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.matched) {
+        throw new Error(data.reason || 'Biometric verification failed: face does not match enrolled identity');
+      }
+      log('Biometric match confirmed, similarity: ' + (data.similarity || 'N/A'));
+    }
+
     function canonicalize(value) {
       if (Array.isArray(value)) {
         return value.map((item) => canonicalize(item));
@@ -2041,6 +2102,38 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
         publicSignals,
         zkProof: { digest }
       };
+    }
+
+    function hexToFieldElement(hex) {
+      const clean = hex.startsWith('0x') ? hex.slice(2) : hex;
+      const bigVal = BigInt('0x' + clean);
+      const BN128_MASK = (1n << 253n) - 1n;
+      return (bigVal & BN128_MASK).toString();
+    }
+
+    let zkMode = 'mock';
+
+    async function buildRealZkProof(preimageHex, challengeFieldElement) {
+      if (!window.snarkjs) {
+        throw new Error('snarkjs not loaded');
+      }
+      log('Generating real Groth16 ZK proof...');
+      const preimageField = hexToFieldElement(preimageHex);
+      const { proof, publicSignals } = await window.snarkjs.groth16.fullProve(
+        { preimage: preimageField, challenge: challengeFieldElement },
+        '/zk/biometric_commitment.wasm',
+        '/zk/circuit_final.zkey'
+      );
+      log('Real ZK proof generated. Commitment: ' + publicSignals[0].substring(0, 16) + '...');
+      return { zkProof: proof, publicSignals };
+    }
+
+    async function buildZkProof(uid, challengeHash, challengeField, extraContext) {
+      if (zkMode === 'real' && window.snarkjs && challengeField) {
+        const preimageHex = lastFaceEmbedding ? lastFaceEmbedding.hash : await sha256Hex('enroll:' + activeUsername + ':' + (enrollmentDraft ? enrollmentDraft.enrollment_id : ''));
+        return buildRealZkProof(preimageHex, challengeField);
+      }
+      return buildMockZkProof(uid, challengeHash, extraContext);
     }
 
     function prepareLoginOptions(options) {
@@ -2183,7 +2276,9 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
         throw new Error(challengeData.reason || challengeData.error || 'Unable to start proof challenge');
       }
 
-      const payload = await buildMockZkProof(uid, challengeData.challenge_hash, {
+      if (challengeData.zk_mode) zkMode = challengeData.zk_mode;
+      const challengeField = challengeData.challenge_field || hexToFieldElement(challengeData.challenge_hash);
+      const payload = await buildZkProof(uid, challengeData.challenge_hash, challengeField, {
         purpose: 'handoff_login'
       });
       const submitResp = await fetch('/pramaan/v2/proof/submit', {
@@ -2210,29 +2305,44 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
         await startV2Enrollment(username);
       }
       const draft = enrollmentDraft;
-      const hash1 = await sha256Hex('enroll:' + username + ':' + draft.enrollment_id);
+      let hash1;
+      let faceEmbeddingPayload = null;
+      if (lastFaceEmbedding && lastFaceEmbedding.hash) {
+        hash1 = lastFaceEmbedding.hash;
+        faceEmbeddingPayload = lastFaceEmbedding.base64;
+        log('Using biometric hash as hash1: ' + hash1.substring(0, 16) + '...');
+      } else {
+        hash1 = await sha256Hex('enroll:' + username + ':' + draft.enrollment_id);
+        log('Face embedding not available, using fallback hash1');
+      }
       const hash2 = await sha256Hex(hash1 + ':' + draft.zk_challenge);
       const commitmentRoot = await sha256Hex(
         hash1 + ':' + hash2 + ':' + draft.did_draft + ':' + draft.uid_draft + ':' + draft.circuit_id
       );
       const challengeHash = await sha256Hex(draft.uid_draft + ':' + draft.zk_challenge);
-      const payload = await buildMockZkProof(draft.uid_draft, challengeHash, {
+      const challengeField = hexToFieldElement(challengeHash);
+      if (draft.zk_mode) zkMode = draft.zk_mode;
+      const payload = await buildZkProof(draft.uid_draft, challengeHash, challengeField, {
         phase: 'enrollment',
         commitment_root: commitmentRoot
       });
+      const enrollBody = {
+        enrollment_id: draft.enrollment_id,
+        passkey_credential_id: 'device-passkey',
+        liveness_session_id: livenessSessionId,
+        zk_proof: payload.zkProof,
+        public_signals: payload.publicSignals,
+        hash1,
+        hash2,
+        commitment_root: commitmentRoot
+      };
+      if (faceEmbeddingPayload) {
+        enrollBody.face_embedding = faceEmbeddingPayload;
+      }
       const resp = await fetch('/pramaan/v2/enrollment/complete', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          enrollment_id: draft.enrollment_id,
-          passkey_credential_id: 'device-passkey',
-          liveness_session_id: livenessSessionId,
-          zk_proof: payload.zkProof,
-          public_signals: payload.publicSignals,
-          hash1,
-          hash2,
-          commitment_root: commitmentRoot
-        })
+        body: JSON.stringify(enrollBody)
       });
       const data = await resp.json();
       if (!resp.ok) {
@@ -2437,6 +2547,21 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
       setStatus('Verifying face challenge...');
 
       try {
+        setText('liveness-state', 'Extracting biometric data...');
+        const videoEl = document.getElementById('preview');
+        try {
+          const descriptor = await extractFaceEmbedding(videoEl);
+          const quantized = quantizeEmbedding(descriptor);
+          const biometricHash = await hashEmbedding(quantized);
+          const embeddingBase64 = uint8ToBase64(quantized);
+          lastFaceEmbedding = { quantized, hash: biometricHash, base64: embeddingBase64 };
+          log('Face embedding extracted, biometric ID: ' + biometricHash.substring(0, 16) + '...');
+        } catch (embErr) {
+          log('Embedding extraction failed: ' + embErr.message + ' (continuing without biometric)');
+          lastFaceEmbedding = null;
+        }
+        setText('liveness-state', 'Verifying liveness result...');
+
         const durationMs = events.length > 1 ? events[events.length - 1].timestamp - events[0].timestamp : 1500;
         const avgConfidence = events.length
           ? events.reduce((sum, event) => sum + (Number(event.confidence) || 0.9), 0) / events.length
@@ -2471,6 +2596,11 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
         const identity = identityContext || (await ensureIdentityContext());
         if (!identity?.uid) {
           throw new Error('Identity not available for proof verification');
+        }
+
+        if (!signupMode && !enrollmentDraft && lastFaceEmbedding) {
+          setText('liveness-state', 'Verifying biometric identity...');
+          await verifyBiometricMatch(identity.uid, lastFaceEmbedding.base64);
         }
 
         await runAuthenticationProof(identity.uid);
@@ -2646,6 +2776,10 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
         } catch (_error) {
           setText('auto-state', 'Auto detection failed. Manual mode enabled.');
         }
+
+        loadFaceApiModels().catch(function(err) {
+          log('Face recognition model preload failed: ' + err.message);
+        });
 
         if (!detectorActive) {
           stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });

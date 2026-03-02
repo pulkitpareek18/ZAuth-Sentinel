@@ -227,6 +227,10 @@ export async function initializeDatabase(): Promise<void> {
     await client.query(`ALTER TABLE access_tokens ADD COLUMN IF NOT EXISTS amr JSONB`);
     await client.query(`ALTER TABLE access_tokens ADD COLUMN IF NOT EXISTS uid TEXT`);
     await client.query(`ALTER TABLE access_tokens ADD COLUMN IF NOT EXISTS did TEXT`);
+    await client.query(`ALTER TABLE pramaan_identity_map ADD COLUMN IF NOT EXISTS face_embedding TEXT`);
+    await client.query(`ALTER TABLE pramaan_identity_map ADD COLUMN IF NOT EXISTS embedding_version INTEGER DEFAULT 1`);
+    await client.query(`ALTER TABLE pramaan_identity_map ADD COLUMN IF NOT EXISTS zk_commitment TEXT`);
+    await client.query(`ALTER TABLE identity_commitments ADD COLUMN IF NOT EXISTS zk_commitment TEXT`);
 
     await client.query(
       `INSERT INTO tenants (id, name, status)

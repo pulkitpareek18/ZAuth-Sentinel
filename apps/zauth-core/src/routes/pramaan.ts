@@ -10,7 +10,8 @@ import {
   findIdentityForSubject,
   getProofReceipt,
   startEnrollment,
-  submitProof
+  submitProof,
+  verifyBiometricMatch
 } from "../services/pramaanV2Service.js";
 
 export const pramaanRouter = Router();
@@ -169,6 +170,7 @@ pramaanRouter.post("/pramaan/v2/enrollment/start", requireSession, async (req, r
     did_draft: draft.didDraft,
     zk_challenge: draft.zkChallenge,
     circuit_id: draft.circuitId,
+    zk_mode: config.zkVerifierMode,
     expires_at: new Date(draft.expiresAt).toISOString()
   });
 });
@@ -186,7 +188,8 @@ pramaanRouter.post("/pramaan/v2/enrollment/complete", requireSession, async (req
     public_signals: z.unknown(),
     hash1: z.string().min(16),
     hash2: z.string().min(16),
-    commitment_root: z.string().min(16)
+    commitment_root: z.string().min(16),
+    face_embedding: z.string().min(100).max(256).optional()
   });
   const parsed = schema.safeParse(req.body ?? {});
   if (!parsed.success) {
@@ -206,7 +209,8 @@ pramaanRouter.post("/pramaan/v2/enrollment/complete", requireSession, async (req
       publicSignals: parsed.data.public_signals,
       hash1: parsed.data.hash1,
       hash2: parsed.data.hash2,
-      commitmentRoot: parsed.data.commitment_root
+      commitmentRoot: parsed.data.commitment_root,
+      faceEmbedding: parsed.data.face_embedding
     });
 
     await writeAuditEvent({
@@ -271,7 +275,9 @@ pramaanRouter.post("/pramaan/v2/proof/challenge", async (req, res) => {
       proof_request_id: challenge.proofRequestId,
       challenge: challenge.challenge,
       challenge_hash: challenge.challengeHash,
+      challenge_field: challenge.challengeField,
       circuit_id: challenge.circuitId,
+      zk_mode: config.zkVerifierMode,
       expires_at: challenge.expiresAt
     });
   } catch (error) {
@@ -373,4 +379,56 @@ pramaanRouter.get("/pramaan/v2/identity/me", requireSession, async (_req, res) =
     return;
   }
   res.status(200).json(identity);
+});
+
+pramaanRouter.post("/pramaan/v2/biometric/verify", requireSession, async (req, res) => {
+  if (!ensureV2Enabled(res)) {
+    return;
+  }
+
+  const schema = z.object({
+    uid: z.string().min(3),
+    face_embedding: z.string().min(100).max(256)
+  });
+  const parsed = schema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_request", details: parsed.error.issues });
+    return;
+  }
+
+  const session = res.locals.session as { subjectId: string; username: string };
+
+  try {
+    const result = await verifyBiometricMatch({
+      uid: parsed.data.uid,
+      candidateEmbedding: parsed.data.face_embedding
+    });
+
+    await writeAuditEvent({
+      tenantId: "default",
+      actor: session.username,
+      action: "pramaan.v2.biometric.verify",
+      outcome: result.matched ? "success" : "failure",
+      traceId: req.traceId,
+      payload: {
+        uid: parsed.data.uid,
+        similarity: result.similarity,
+        threshold: result.threshold,
+        reason: result.reason ?? null
+      }
+    });
+
+    res.status(result.matched ? 200 : 403).json({
+      matched: result.matched,
+      similarity: result.similarity,
+      threshold: result.threshold,
+      reason: result.reason
+    });
+  } catch (error) {
+    res.status(400).json({
+      matched: false,
+      error: "biometric_verify_failed",
+      reason: (error as Error).message
+    });
+  }
 });

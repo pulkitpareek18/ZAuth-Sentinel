@@ -16,3 +16,4 @@ npm-debug.log*
 *.sqlite
 apps/*/dist/
 apps/*/node_modules/
+apps/zauth-core/zk/build/

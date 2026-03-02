@@ -1,18 +1,30 @@
 pragma circom 2.1.9;
 
-template BiometricCommitment() {
-    signal input uid_hash;
-    signal input challenge_hash;
-    signal input commitment_root;
+include "circomlib/circuits/poseidon.circom";
 
-    signal output out_uid_hash;
-    signal output out_challenge_hash;
-    signal output out_commitment_root;
+template BiometricProof() {
+    // Private input: biometric hash truncated to 253 bits (fits in BN128 scalar field)
+    signal input preimage;
 
-    // Public signal pass-through scaffold. Replace with real constraints for production circuit.
-    out_uid_hash <== uid_hash;
-    out_challenge_hash <== challenge_hash;
-    out_commitment_root <== commitment_root;
+    // Public input: challenge from the server (also truncated to 253 bits)
+    signal input challenge;
+
+    // Public output: Poseidon(preimage) -- stored at enrollment, checked at authentication
+    signal output commitment;
+
+    // Public output: Poseidon(preimage, challenge) -- proves freshness / challenge binding
+    signal output binding;
+
+    // Compute commitment = Poseidon(preimage)
+    component h1 = Poseidon(1);
+    h1.inputs[0] <== preimage;
+    commitment <== h1.out;
+
+    // Compute binding = Poseidon(preimage, challenge)
+    component h2 = Poseidon(2);
+    h2.inputs[0] <== preimage;
+    h2.inputs[1] <== challenge;
+    binding <== h2.out;
 }
 
-component main = BiometricCommitment();
+component main {public [challenge]} = BiometricProof();
