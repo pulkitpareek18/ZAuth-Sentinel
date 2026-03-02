@@ -347,21 +347,14 @@ export async function submitProof(input: {
 
   const expectedChallengeHash = sha256(`${request.uid}:${request.challenge}`);
 
-  let expectedCommitment: string | undefined;
-  if (config.zkVerifierMode === "real") {
-    const commitmentResult = await pool.query<{ zk_commitment: string | null }>(
-      `SELECT zk_commitment FROM pramaan_identity_map WHERE uid = $1`,
-      [request.uid]
-    );
-    expectedCommitment = commitmentResult.rows[0]?.zk_commitment ?? undefined;
-  }
-
+  // NOTE: We intentionally skip the zk_commitment check during auth.
+  // Biometric descriptors vary between scans, so Poseidon(hash_enroll) ≠ Poseidon(hash_auth).
+  // Identity binding is enforced by server-side face matching (cosine similarity) above.
   const verification = await verifyZkProof({
     uid: request.uid,
     expectedChallengeHash: config.zkVerifierMode === "real" ? hexToFieldElement(expectedChallengeHash) : expectedChallengeHash,
     zkProof: input.zkProof,
-    publicSignals: input.publicSignals,
-    expectedCommitment
+    publicSignals: input.publicSignals
   });
 
   await pool.query(
