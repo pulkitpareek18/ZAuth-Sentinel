@@ -2281,16 +2281,20 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
       const payload = await buildZkProof(uid, challengeData.challenge_hash, challengeField, {
         purpose: 'handoff_login'
       });
-      const submitResp = await fetch('/pramaan/v2/proof/submit', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
+      const submitBody = {
           proof_request_id: challengeData.proof_request_id,
           uid,
           zk_proof: payload.zkProof,
           public_signals: payload.publicSignals,
           handoff_id: handoffId
-        })
+      };
+      if (lastFaceEmbedding && lastFaceEmbedding.base64) {
+        submitBody.face_embedding = lastFaceEmbedding.base64;
+      }
+      const submitResp = await fetch('/pramaan/v2/proof/submit', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(submitBody)
       });
       const submitData = await submitResp.json();
       if (!submitResp.ok || !submitData.verified) {
@@ -2557,8 +2561,11 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
           lastFaceEmbedding = { quantized, hash: biometricHash, base64: embeddingBase64 };
           log('Face embedding extracted, biometric ID: ' + biometricHash.substring(0, 16) + '...');
         } catch (embErr) {
-          log('Embedding extraction failed: ' + embErr.message + ' (continuing without biometric)');
+          log('Embedding extraction failed: ' + embErr.message);
           lastFaceEmbedding = null;
+          if (!signupMode && !enrollmentDraft) {
+            throw new Error('Face embedding extraction failed — cannot verify identity. Please ensure good lighting and try again.');
+          }
         }
         setText('liveness-state', 'Verifying liveness result...');
 

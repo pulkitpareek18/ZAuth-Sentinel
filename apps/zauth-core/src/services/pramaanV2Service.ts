@@ -294,6 +294,7 @@ export async function submitProof(input: {
   zkProof: unknown;
   publicSignals: unknown;
   handoffId?: string;
+  faceEmbedding?: string;
 }): Promise<{
   verified: boolean;
   verificationId: string;
@@ -312,6 +313,36 @@ export async function submitProof(input: {
   }
   if (new Date(request.expires_at).getTime() < Date.now()) {
     throw new Error("proof_request_expired");
+  }
+
+  // Server-side biometric verification: compare captured face against enrolled face
+  if (input.faceEmbedding) {
+    const bioMatch = await verifyBiometricMatch({
+      uid: request.uid,
+      candidateEmbedding: input.faceEmbedding
+    });
+    if (!bioMatch.matched) {
+      return {
+        verified: false,
+        verificationId: randomId(18),
+        reason: bioMatch.reason === "no_enrolled_embedding"
+          ? "no_enrolled_face"
+          : `biometric_mismatch:${bioMatch.similarity}`
+      };
+    }
+  } else {
+    // Check if this identity has an enrolled face — if so, require it
+    const faceCheck = await pool.query<{ face_embedding: string | null }>(
+      `SELECT face_embedding FROM pramaan_identity_map WHERE uid = $1`,
+      [request.uid]
+    );
+    if (faceCheck.rows[0]?.face_embedding) {
+      return {
+        verified: false,
+        verificationId: randomId(18),
+        reason: "face_embedding_required"
+      };
+    }
   }
 
   const expectedChallengeHash = sha256(`${request.uid}:${request.challenge}`);

@@ -298,7 +298,8 @@ pramaanRouter.post("/pramaan/v2/proof/submit", async (req, res) => {
     uid: z.string().min(3),
     zk_proof: z.unknown(),
     public_signals: z.unknown(),
-    handoff_id: z.string().optional()
+    handoff_id: z.string().optional(),
+    face_embedding: z.string().min(100).max(256).optional()
   });
   const parsed = schema.safeParse(req.body ?? {});
   if (!parsed.success) {
@@ -312,7 +313,8 @@ pramaanRouter.post("/pramaan/v2/proof/submit", async (req, res) => {
       uid: parsed.data.uid,
       zkProof: parsed.data.zk_proof,
       publicSignals: parsed.data.public_signals,
-      handoffId: parsed.data.handoff_id
+      handoffId: parsed.data.handoff_id,
+      faceEmbedding: parsed.data.face_embedding
     });
 
     await writeAuditEvent({
