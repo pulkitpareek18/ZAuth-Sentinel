@@ -182,5 +182,6 @@ export type RecoveryCode = {
   id: number;
   subject_id: string;
   code_hash: string;
-  consumed_at?: string | null;
+  generation_id: string;
+  created_at: string;
 };

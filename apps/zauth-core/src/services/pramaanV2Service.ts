@@ -117,6 +117,7 @@ export async function completeEnrollment(input: {
   hash2: string;
   commitmentRoot: string;
   faceEmbedding?: string;
+  skipRecoveryCodeRegen?: boolean;
 }): Promise<{
   uid: string;
   did: string;
@@ -204,14 +205,43 @@ export async function completeEnrollment(input: {
     ]
   );
 
-  const recoveryCodes = generateRecoveryCodes();
-  await pool.query(`DELETE FROM recovery_codes WHERE subject_id = $1`, [draft.subjectId]);
-  for (const code of recoveryCodes) {
-    await pool.query(
-      `INSERT INTO recovery_codes (subject_id, code_hash)
-       VALUES ($1, $2)`,
-      [draft.subjectId, sha256(`${draft.subjectId}:${code}:${config.tenantSalt}`)]
-    );
+  // Blockchain-ready: append-only identity commitment event log.
+  // Each enrollment creates a new versioned entry (maps to on-chain IdentityCommitted events).
+  const versionResult = await pool.query<{ next_version: number; prev_root: string | null }>(
+    `SELECT
+       COALESCE(MAX(version), 0) + 1 as next_version,
+       (SELECT commitment_root FROM identity_commitment_log WHERE uid = $1 ORDER BY version DESC LIMIT 1) as prev_root
+     FROM identity_commitment_log WHERE uid = $1`,
+    [draft.uidDraft]
+  );
+  await pool.query(
+    `INSERT INTO identity_commitment_log (uid, did, version, hash1, hash2, commitment_root, circuit_id, subject_id, tenant_id, zk_commitment, prev_commitment_root)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+    [
+      draft.uidDraft, draft.didDraft,
+      versionResult.rows[0]?.next_version ?? 1,
+      input.hash1, input.hash2, input.commitmentRoot,
+      draft.circuitId, draft.subjectId, draft.tenantId,
+      zkCommitment,
+      versionResult.rows[0]?.prev_root ?? null
+    ]
+  );
+
+  // Only regenerate recovery codes on fresh enrollment or face-verified recovery.
+  // Multi-code recovery skips this so the attacker can't mint fresh codes.
+  // Blockchain-ready: instead of DELETE old codes, we INSERT a new generation.
+  // Old generations are superseded (not deleted) — append-only.
+  let recoveryCodes: string[] = [];
+  if (!input.skipRecoveryCodeRegen) {
+    recoveryCodes = generateRecoveryCodes();
+    const generationId = randomId(12);
+    for (const code of recoveryCodes) {
+      await pool.query(
+        `INSERT INTO recovery_codes (subject_id, code_hash, generation_id)
+         VALUES ($1, $2, $3)`,
+        [draft.subjectId, sha256(`${draft.subjectId}:${code}:${config.tenantSalt}`), generationId]
+      );
+    }
   }
 
   const attestationJwt = await signAttestationJwt(draft.subjectId, {
@@ -278,11 +308,14 @@ export async function createProofChallenge(input: {
   };
 }
 
+// Blockchain-ready: derive consumed status from nullifier table, not from column.
 async function getProofRequest(proofRequestId: string): Promise<ProofRequestRecord | null> {
   const result = await pool.query<ProofRequestRecord>(
-    `SELECT proof_request_id, uid, challenge, purpose, expires_at::text, consumed
-     FROM zk_proof_requests
-     WHERE proof_request_id = $1`,
+    `SELECT zpr.proof_request_id, zpr.uid, zpr.challenge, zpr.purpose, zpr.expires_at::text,
+            (prn.proof_request_id IS NOT NULL) as consumed
+     FROM zk_proof_requests zpr
+     LEFT JOIN proof_request_nullifiers prn ON prn.proof_request_id = zpr.proof_request_id
+     WHERE zpr.proof_request_id = $1`,
     [proofRequestId]
   );
   return result.rows[0] ?? null;
@@ -327,7 +360,7 @@ export async function submitProof(input: {
         verificationId: randomId(18),
         reason: bioMatch.reason === "no_enrolled_embedding"
           ? "no_enrolled_face"
-          : `biometric_mismatch:${bioMatch.similarity}`
+          : `biometric_mismatch:distance=${bioMatch.distance}`
       };
     }
   } else {
@@ -357,10 +390,10 @@ export async function submitProof(input: {
     publicSignals: input.publicSignals
   });
 
+  // Blockchain-ready: INSERT nullifier instead of UPDATE consumed = TRUE.
   await pool.query(
-    `UPDATE zk_proof_requests
-     SET consumed = TRUE
-     WHERE proof_request_id = $1`,
+    `INSERT INTO proof_request_nullifiers (proof_request_id)
+     VALUES ($1) ON CONFLICT (proof_request_id) DO NOTHING`,
     [input.proofRequestId]
   );
 
@@ -448,44 +481,216 @@ export async function getProofReceipt(verificationId: string): Promise<{
   return result.rows[0] ?? null;
 }
 
-function base64ToUint8(base64: string): Uint8Array {
+export async function verifyRecoveryCode(input: {
+  username: string;
+  recoveryCode: string;
+}): Promise<{
+  valid: boolean;
+  subjectId?: string;
+  codeId?: number;
+  reason?: string;
+}> {
+  const userResult = await pool.query<{ subject_id: string }>(
+    `SELECT subject_id FROM users WHERE username = $1`,
+    [input.username.trim().toLowerCase()]
+  );
+  const user = userResult.rows[0];
+  if (!user) {
+    return { valid: false, reason: "user_not_found" };
+  }
+
+  const normalizedCode = input.recoveryCode.trim().toUpperCase();
+  const codeHash = sha256(`${user.subject_id}:${normalizedCode}:${config.tenantSalt}`);
+
+  // Blockchain-ready: filter by latest generation (superseded generations are ignored, not deleted).
+  const genResult = await pool.query<{ generation_id: string }>(
+    `SELECT generation_id FROM recovery_codes WHERE subject_id = $1 ORDER BY created_at DESC LIMIT 1`,
+    [user.subject_id]
+  );
+  if (!genResult.rows[0]) {
+    return { valid: false, reason: "no_recovery_codes" };
+  }
+  const latestGen = genResult.rows[0].generation_id;
+
+  const codeResult = await pool.query<{ id: number }>(
+    `SELECT id FROM recovery_codes WHERE subject_id = $1 AND code_hash = $2 AND generation_id = $3`,
+    [user.subject_id, codeHash, latestGen]
+  );
+  const code = codeResult.rows[0];
+  if (!code) {
+    return { valid: false, reason: "invalid_code" };
+  }
+
+  // Blockchain-ready: check nullifier instead of consumed_at column.
+  const nullifierCheck = await pool.query(
+    `SELECT 1 FROM recovery_nullifiers WHERE code_id = $1`,
+    [code.id]
+  );
+  if (nullifierCheck.rows.length > 0) {
+    return { valid: false, reason: "code_already_used" };
+  }
+
+  // Don't consume yet — consumption happens after biometric verification
+  return { valid: true, subjectId: user.subject_id, codeId: code.id };
+}
+
+// Blockchain-ready: instead of UPDATE consumed_at, INSERT a nullifier.
+// Mirrors on-chain nullifier sets used in ZK mixers / commitment schemes.
+export async function consumeRecoveryCode(codeId: number, subjectId: string): Promise<void> {
+  const nullifierHash = sha256(`nullifier:recovery:${codeId}:${subjectId}`);
+  await pool.query(
+    `INSERT INTO recovery_nullifiers (nullifier_hash, code_id, subject_id)
+     VALUES ($1, $2, $3) ON CONFLICT (nullifier_hash) DO NOTHING`,
+    [nullifierHash, codeId, subjectId]
+  );
+}
+
+// Blockchain-ready: batch nullifier insertion for multi-code consumption.
+export async function consumeRecoveryCodes(codeIds: number[], subjectId: string): Promise<void> {
+  for (const codeId of codeIds) {
+    const nullifierHash = sha256(`nullifier:recovery:${codeId}:${subjectId}`);
+    await pool.query(
+      `INSERT INTO recovery_nullifiers (nullifier_hash, code_id, subject_id)
+       VALUES ($1, $2, $3) ON CONFLICT (nullifier_hash) DO NOTHING`,
+      [nullifierHash, codeId, subjectId]
+    );
+  }
+}
+
+// Verify multiple recovery codes for the face-mismatch fallback.
+// Requires RECOVERY_CODES_FOR_BYPASS (default 3) valid, unconsumed codes.
+const RECOVERY_CODES_FOR_BYPASS = 3;
+
+export async function verifyMultipleRecoveryCodes(input: {
+  subjectId: string;
+  recoveryCodes: string[];
+}): Promise<{
+  valid: boolean;
+  codeIds: number[];
+  reason?: string;
+}> {
+  if (input.recoveryCodes.length < RECOVERY_CODES_FOR_BYPASS) {
+    return { valid: false, codeIds: [], reason: `need_${RECOVERY_CODES_FOR_BYPASS}_codes` };
+  }
+
+  // Deduplicate
+  const uniqueCodes = [...new Set(input.recoveryCodes.map(c => c.trim().toUpperCase()))];
+  if (uniqueCodes.length < RECOVERY_CODES_FOR_BYPASS) {
+    return { valid: false, codeIds: [], reason: "duplicate_codes" };
+  }
+
+  // Blockchain-ready: filter by latest generation (old generations superseded, not deleted).
+  const genResult = await pool.query<{ generation_id: string }>(
+    `SELECT generation_id FROM recovery_codes WHERE subject_id = $1 ORDER BY created_at DESC LIMIT 1`,
+    [input.subjectId]
+  );
+  if (!genResult.rows[0]) {
+    return { valid: false, codeIds: [], reason: "no_recovery_codes" };
+  }
+  const latestGen = genResult.rows[0].generation_id;
+
+  const validIds: number[] = [];
+  for (const code of uniqueCodes.slice(0, RECOVERY_CODES_FOR_BYPASS)) {
+    const codeHash = sha256(`${input.subjectId}:${code}:${config.tenantSalt}`);
+    const result = await pool.query<{ id: number }>(
+      `SELECT id FROM recovery_codes WHERE subject_id = $1 AND code_hash = $2 AND generation_id = $3`,
+      [input.subjectId, codeHash, latestGen]
+    );
+    const row = result.rows[0];
+    if (!row) {
+      return { valid: false, codeIds: [], reason: "invalid_code" };
+    }
+    // Blockchain-ready: check nullifier instead of consumed_at.
+    const nullifierCheck = await pool.query(
+      `SELECT 1 FROM recovery_nullifiers WHERE code_id = $1`,
+      [row.id]
+    );
+    if (nullifierCheck.rows.length > 0) {
+      return { valid: false, codeIds: [], reason: "code_already_used" };
+    }
+    validIds.push(row.id);
+  }
+
+  return { valid: true, codeIds: validIds };
+}
+
+export async function findUidForSubject(subjectId: string): Promise<string | null> {
+  const result = await pool.query<{ uid: string }>(
+    `SELECT uid FROM pramaan_identity_map WHERE subject_id = $1 ORDER BY created_at DESC LIMIT 1`,
+    [subjectId]
+  );
+  return result.rows[0]?.uid ?? null;
+}
+
+// Blockchain-ready: INSERT revocation events instead of DELETE.
+// Revoked credentials are filtered out at query time.
+export async function revokeAllCredentialsForSubject(subjectId: string): Promise<void> {
+  const credentials = await pool.query<{ credential_id: string }>(
+    `SELECT pc.credential_id FROM passkey_credentials pc
+     WHERE pc.subject_id = $1
+     AND NOT EXISTS (SELECT 1 FROM credential_revocations cr WHERE cr.credential_id = pc.credential_id)`,
+    [subjectId]
+  );
+  for (const cred of credentials.rows) {
+    await pool.query(
+      `INSERT INTO credential_revocations (credential_id, subject_id)
+       VALUES ($1, $2) ON CONFLICT (credential_id) DO NOTHING`,
+      [cred.credential_id, subjectId]
+    );
+  }
+}
+
+function base64ToFloat32(base64: string): Float32Array {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i);
   }
-  return bytes;
+  return new Float32Array(bytes.buffer);
 }
 
-function cosineSimilarity(a: Uint8Array, b: Uint8Array): number {
-  if (a.length !== b.length) {
-    return 0;
+function float32ToBase64(arr: Float32Array): string {
+  const bytes = new Uint8Array(arr.buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
   }
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
+  return btoa(binary);
+}
+
+// Euclidean (L2) distance — the standard metric for face-api.js descriptors.
+// Same person: distance < 0.6 | Different person: distance > 0.6
+function euclideanDistance(a: Float32Array, b: Float32Array): number {
+  let sum = 0;
   for (let i = 0; i < a.length; i++) {
-    const valA = a[i] - 128;
-    const valB = b[i] - 128;
-    dot += valA * valB;
-    normA += valA * valA;
-    normB += valB * valB;
+    const diff = a[i] - b[i];
+    sum += diff * diff;
   }
-  const denom = Math.sqrt(normA) * Math.sqrt(normB);
-  if (denom === 0) {
-    return 0;
-  }
-  return dot / denom;
+  return Math.sqrt(sum);
 }
 
-const BIOMETRIC_MATCH_THRESHOLD = 0.80;
+// Adaptive face enrollment: on each successful auth, blend the enrolled embedding
+// toward the new scan. This lets the system gradually adapt to appearance changes
+// (aging, weight, hair) without a single auth being able to fully replace the baseline.
+const FACE_UPDATE_ALPHA = 0.3;
+
+function blendEmbeddings(enrolled: Float32Array, candidate: Float32Array): Float32Array {
+  const blended = new Float32Array(enrolled.length);
+  for (let i = 0; i < enrolled.length; i++) {
+    blended[i] = FACE_UPDATE_ALPHA * candidate[i] + (1 - FACE_UPDATE_ALPHA) * enrolled[i];
+  }
+  return blended;
+}
+
+// face-api.js standard: L2 distance < 0.6 = same person
+const BIOMETRIC_DISTANCE_THRESHOLD = 0.6;
 
 export async function verifyBiometricMatch(input: {
   uid: string;
   candidateEmbedding: string;
 }): Promise<{
   matched: boolean;
-  similarity: number;
+  distance: number;
   threshold: number;
   reason?: string;
 }> {
@@ -495,26 +700,37 @@ export async function verifyBiometricMatch(input: {
   );
   const row = result.rows[0];
   if (!row) {
-    return { matched: false, similarity: 0, threshold: BIOMETRIC_MATCH_THRESHOLD, reason: "uid_not_found" };
+    return { matched: false, distance: 999, threshold: BIOMETRIC_DISTANCE_THRESHOLD, reason: "uid_not_found" };
   }
   if (!row.face_embedding) {
-    return { matched: false, similarity: 0, threshold: BIOMETRIC_MATCH_THRESHOLD, reason: "no_enrolled_embedding" };
+    return { matched: false, distance: 999, threshold: BIOMETRIC_DISTANCE_THRESHOLD, reason: "no_enrolled_embedding" };
   }
 
-  const enrolled = base64ToUint8(row.face_embedding);
-  const candidate = base64ToUint8(input.candidateEmbedding);
+  const enrolled = base64ToFloat32(row.face_embedding);
+  const candidate = base64ToFloat32(input.candidateEmbedding);
 
+  // Float32Array(128) → 512 bytes → base64 ≈ 684 chars
   if (enrolled.length !== 128 || candidate.length !== 128) {
-    return { matched: false, similarity: 0, threshold: BIOMETRIC_MATCH_THRESHOLD, reason: "invalid_embedding_length" };
+    return { matched: false, distance: 999, threshold: BIOMETRIC_DISTANCE_THRESHOLD, reason: "invalid_embedding_length" };
   }
 
-  const similarity = cosineSimilarity(enrolled, candidate);
-  const matched = similarity >= BIOMETRIC_MATCH_THRESHOLD;
+  const distance = euclideanDistance(enrolled, candidate);
+  const matched = distance < BIOMETRIC_DISTANCE_THRESHOLD;
+
+  // Adaptive face update: on successful match, blend enrolled face toward the new scan.
+  if (matched) {
+    const blended = blendEmbeddings(enrolled, candidate);
+    const blendedBase64 = float32ToBase64(blended);
+    await pool.query(
+      `UPDATE pramaan_identity_map SET face_embedding = $1 WHERE uid = $2`,
+      [blendedBase64, input.uid]
+    );
+  }
 
   return {
     matched,
-    similarity: Math.round(similarity * 1000) / 1000,
-    threshold: BIOMETRIC_MATCH_THRESHOLD,
-    reason: matched ? undefined : "similarity_below_threshold"
+    distance: Math.round(distance * 1000) / 1000,
+    threshold: BIOMETRIC_DISTANCE_THRESHOLD,
+    reason: matched ? undefined : "face_mismatch"
   };
 }

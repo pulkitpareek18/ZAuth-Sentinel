@@ -58,21 +58,25 @@ export async function upsertCredential(
   );
 }
 
+// Blockchain-ready: filter out revoked credentials (revocations are append-only, credentials are never deleted).
 export async function getCredentialById(credentialId: string): Promise<PasskeyCredential | null> {
   const result = await pool.query<PasskeyCredential>(
-    `SELECT credential_id, subject_id, public_key, counter::int, transports, created_at::text
-     FROM passkey_credentials
-     WHERE credential_id = $1`,
+    `SELECT pc.credential_id, pc.subject_id, pc.public_key, pc.counter::int, pc.transports, pc.created_at::text
+     FROM passkey_credentials pc
+     WHERE pc.credential_id = $1
+     AND NOT EXISTS (SELECT 1 FROM credential_revocations cr WHERE cr.credential_id = pc.credential_id)`,
     [credentialId]
   );
   return result.rows[0] ?? null;
 }
 
+// Blockchain-ready: filter out revoked credentials.
 export async function listCredentialsForUser(subjectId: string): Promise<PasskeyCredential[]> {
   const result = await pool.query<PasskeyCredential>(
-    `SELECT credential_id, subject_id, public_key, counter::int, transports, created_at::text
-     FROM passkey_credentials
-     WHERE subject_id = $1`,
+    `SELECT pc.credential_id, pc.subject_id, pc.public_key, pc.counter::int, pc.transports, pc.created_at::text
+     FROM passkey_credentials pc
+     WHERE pc.subject_id = $1
+     AND NOT EXISTS (SELECT 1 FROM credential_revocations cr WHERE cr.credential_id = pc.credential_id)`,
     [subjectId]
   );
   return result.rows;

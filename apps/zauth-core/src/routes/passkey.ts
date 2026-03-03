@@ -22,7 +22,9 @@ import {
   finishPasskeyAuthentication,
   finishPasskeyRegistration
 } from "../services/passkeyService.js";
-import { getProofReceipt } from "../services/pramaanV2Service.js";
+import { getProofReceipt, verifyRecoveryCode, consumeRecoveryCode, consumeRecoveryCodes, revokeAllCredentialsForSubject, verifyBiometricMatch, findUidForSubject, verifyMultipleRecoveryCodes } from "../services/pramaanV2Service.js";
+import { findUserBySubject } from "../services/userService.js";
+import { getCache } from "../services/cacheService.js";
 import { clearSessionCookie, createSession, deleteSession, getSession, setSessionCookie } from "../services/sessionService.js";
 
 export const passkeyRouter = Router();
@@ -123,6 +125,11 @@ passkeyRouter.post("/auth/webauthn/login/options", async (req, res) => {
   res.status(200).json(options);
 });
 
+// Passkey-only login creates a session with aal1 assurance (passkey only).
+// For full patent-compliant auth (biometric + ZK), use the phone handoff flow
+// which upgrades to aal2:zk via face verification and zero-knowledge proof.
+// Downstream apps (e.g. Z Notes) can enforce NOTES_REQUIRED_ACR=urn:zauth:aal2:zk
+// to require the full biometric+ZK flow.
 passkeyRouter.post("/auth/webauthn/login/verify", async (req, res) => {
   const bodySchema = z.object({
     username: usernameSchema,
@@ -150,7 +157,10 @@ passkeyRouter.post("/auth/webauthn/login/verify", async (req, res) => {
     return;
   }
 
-  const session = await createSession(result.subjectId, result.username);
+  const session = await createSession(result.subjectId, result.username, {
+    acr: "urn:zauth:aal1",
+    amr: ["passkey"]
+  });
   setSessionCookie(res, session.sessionId);
 
   await writeAuditEvent({
@@ -571,5 +581,249 @@ passkeyRouter.get("/auth/handoff/status", async (req, res) => {
   res.status(200).json({
     status: "approved",
     redirectTo: consumed.requestId ? `/ui/consent?request_id=${encodeURIComponent(consumed.requestId)}` : "/"
+  });
+});
+
+// ── Recovery Flow ──────────────────────────────────────────────────
+// Step 1: Validate recovery code (does NOT consume it yet)
+// Returns a recovery_token to use in step 2
+passkeyRouter.post("/auth/recovery/verify", async (req, res) => {
+  const schema = z.object({
+    username: usernameSchema,
+    recovery_code: z.string().min(4).max(20)
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_request", details: parsed.error.issues });
+    return;
+  }
+
+  const result = await verifyRecoveryCode({
+    username: parsed.data.username,
+    recoveryCode: parsed.data.recovery_code
+  });
+
+  await writeAuditEvent({
+    tenantId: "default",
+    actor: parsed.data.username,
+    action: "auth.recovery.verify",
+    outcome: result.valid ? "success" : "failure",
+    traceId: req.traceId,
+    payload: {
+      reason: result.reason ?? null
+    }
+  });
+
+  if (!result.valid || !result.subjectId || !result.codeId) {
+    res.status(401).json({ verified: false, reason: result.reason });
+    return;
+  }
+
+  // Store recovery context in cache (10 min TTL) — requires biometric step to complete
+  const recoveryToken = `recovery_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  await getCache().set(
+    `recovery:${recoveryToken}`,
+    JSON.stringify({ subjectId: result.subjectId, codeId: result.codeId, username: parsed.data.username }),
+    600
+  );
+
+  res.status(200).json({
+    verified: true,
+    recovery_token: recoveryToken,
+    next_step: "biometric"
+  });
+});
+
+// Step 2: Verify face against enrolled biometric, then create session
+// Recovery code + face match = full identity verification
+passkeyRouter.post("/auth/recovery/biometric", async (req, res) => {
+  const schema = z.object({
+    recovery_token: z.string().min(10),
+    face_embedding: z.string().min(100).max(1024)
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_request", details: parsed.error.issues });
+    return;
+  }
+
+  // Retrieve recovery context
+  const raw = await getCache().get(`recovery:${parsed.data.recovery_token}`);
+  if (!raw) {
+    res.status(401).json({ verified: false, reason: "recovery_token_expired" });
+    return;
+  }
+  const ctx = JSON.parse(raw) as { subjectId: string; codeId: number; username: string };
+
+  // Find the user's Pramaan UID to look up enrolled face
+  const uid = await findUidForSubject(ctx.subjectId);
+  if (!uid) {
+    res.status(400).json({ verified: false, reason: "no_enrolled_identity" });
+    return;
+  }
+
+  // Verify face against enrolled biometric
+  const bioMatch = await verifyBiometricMatch({
+    uid,
+    candidateEmbedding: parsed.data.face_embedding
+  });
+
+  await writeAuditEvent({
+    tenantId: "default",
+    actor: ctx.username,
+    action: "auth.recovery.biometric",
+    outcome: bioMatch.matched ? "success" : "failure",
+    traceId: req.traceId,
+    payload: {
+      distance: bioMatch.distance,
+      threshold: bioMatch.threshold,
+      reason: bioMatch.reason ?? null
+    }
+  });
+
+  if (!bioMatch.matched) {
+    // Don't delete the recovery token — user can retry face or use multi-code fallback
+    res.status(403).json({
+      verified: false,
+      reason: "face_mismatch",
+      distance: bioMatch.distance,
+      threshold: bioMatch.threshold,
+      fallback: "multi_code"
+    });
+    return;
+  }
+
+  // Face matches — NOW consume the recovery code (blockchain-ready: inserts nullifier)
+  await consumeRecoveryCode(ctx.codeId, ctx.subjectId);
+
+  // Revoke old passkey credentials so user can register new ones (blockchain-ready: inserts revocations)
+  await revokeAllCredentialsForSubject(ctx.subjectId);
+
+  // Clean up recovery token
+  await getCache().del(`recovery:${parsed.data.recovery_token}`);
+
+  // Create session
+  const user = await findUserBySubject(ctx.subjectId);
+  const session = await createSession(ctx.subjectId, user?.username ?? ctx.username);
+  setSessionCookie(res, session.sessionId);
+
+  await writeAuditEvent({
+    tenantId: "default",
+    actor: ctx.username,
+    action: "auth.recovery.session_created",
+    outcome: "success",
+    traceId: req.traceId,
+    payload: {
+      subject_id: ctx.subjectId,
+      distance: bioMatch.distance
+    }
+  });
+
+  res.status(200).json({
+    verified: true,
+    redirectTo: "/ui/recovery/enroll"
+  });
+});
+
+// Check how the current session was recovered (used by re-enrollment page)
+passkeyRouter.get("/auth/recovery/method", async (req, res) => {
+  const sid = req.cookies.zauth_sid as string | undefined;
+  if (!sid) {
+    res.status(401).json({ method: null });
+    return;
+  }
+  const method = await getCache().get(`recovery_method:${sid}`);
+  res.status(200).json({ method: method ?? "biometric" });
+});
+
+// Step 2b (fallback): If face doesn't match, verify with 3 recovery codes instead
+// This handles cases where appearance changed (weight, aging, surgery, etc.)
+passkeyRouter.post("/auth/recovery/multi-code", async (req, res) => {
+  const schema = z.object({
+    recovery_token: z.string().min(10),
+    recovery_codes: z.array(z.string().min(4).max(20)).min(3).max(8)
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_request", details: parsed.error.issues });
+    return;
+  }
+
+  // Retrieve recovery context (still valid from step 1)
+  const raw = await getCache().get(`recovery:${parsed.data.recovery_token}`);
+  if (!raw) {
+    res.status(401).json({ verified: false, reason: "recovery_token_expired" });
+    return;
+  }
+  const ctx = JSON.parse(raw) as { subjectId: string; codeId: number; username: string };
+
+  // Verify 3 distinct recovery codes
+  const multiResult = await verifyMultipleRecoveryCodes({
+    subjectId: ctx.subjectId,
+    recoveryCodes: parsed.data.recovery_codes
+  });
+
+  await writeAuditEvent({
+    tenantId: "default",
+    actor: ctx.username,
+    action: "auth.recovery.multi_code",
+    outcome: multiResult.valid ? "success" : "failure",
+    traceId: req.traceId,
+    payload: {
+      codes_provided: parsed.data.recovery_codes.length,
+      reason: multiResult.reason ?? null
+    }
+  });
+
+  if (!multiResult.valid) {
+    const reasons: Record<string, string> = {
+      need_3_codes: "Please provide at least 3 recovery codes.",
+      duplicate_codes: "Each recovery code must be different.",
+      invalid_code: "One or more recovery codes are invalid.",
+      code_already_used: "One or more recovery codes have already been used."
+    };
+    res.status(401).json({
+      verified: false,
+      reason: multiResult.reason,
+      message: reasons[multiResult.reason ?? ""] ?? "Multi-code verification failed."
+    });
+    return;
+  }
+
+  // All 3 codes valid — consume them + the original code from step 1 (blockchain-ready: inserts nullifiers)
+  await consumeRecoveryCodes([ctx.codeId, ...multiResult.codeIds], ctx.subjectId);
+
+  // Revoke old passkey credentials (blockchain-ready: inserts revocations)
+  await revokeAllCredentialsForSubject(ctx.subjectId);
+
+  // Clean up recovery token
+  await getCache().del(`recovery:${parsed.data.recovery_token}`);
+
+  // Create session
+  const user = await findUserBySubject(ctx.subjectId);
+  const session = await createSession(ctx.subjectId, user?.username ?? ctx.username);
+  setSessionCookie(res, session.sessionId);
+
+  // Mark this session as multi-code recovery — re-enrollment must NOT regenerate codes
+  await getCache().set(`recovery_method:${session.sessionId}`, "multi_code", config.sessionTtlSeconds);
+
+  await writeAuditEvent({
+    tenantId: "default",
+    actor: ctx.username,
+    action: "auth.recovery.session_created",
+    outcome: "success",
+    traceId: req.traceId,
+    payload: {
+      subject_id: ctx.subjectId,
+      method: "multi_code_fallback"
+    }
+  });
+
+  res.status(200).json({
+    verified: true,
+    redirectTo: "/ui/recovery/enroll"
   });
 });

@@ -202,7 +202,53 @@ CREATE TABLE IF NOT EXISTS recovery_codes (
   id BIGSERIAL PRIMARY KEY,
   subject_id TEXT NOT NULL REFERENCES users(subject_id),
   code_hash TEXT NOT NULL,
-  consumed_at TIMESTAMPTZ
+  generation_id TEXT NOT NULL DEFAULT 'gen0',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Blockchain-ready: append-only nullifier table for recovery code consumption.
+-- Instead of UPDATE consumed_at, we INSERT a nullifier — mirrors on-chain nullifier sets.
+CREATE TABLE IF NOT EXISTS recovery_nullifiers (
+  nullifier_hash TEXT PRIMARY KEY,
+  code_id BIGINT NOT NULL,
+  subject_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Blockchain-ready: append-only nullifier for ZK proof request consumption.
+-- Instead of UPDATE consumed = TRUE, we INSERT — mirrors on-chain nullifier sets.
+CREATE TABLE IF NOT EXISTS proof_request_nullifiers (
+  proof_request_id TEXT PRIMARY KEY,
+  consumed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Blockchain-ready: append-only revocation log for passkey credentials.
+-- Instead of DELETE FROM passkey_credentials, we INSERT a revocation event.
+CREATE TABLE IF NOT EXISTS credential_revocations (
+  credential_id TEXT PRIMARY KEY,
+  subject_id TEXT NOT NULL,
+  revoked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Blockchain-ready: append-only identity commitment event log.
+-- Each enrollment/re-enrollment creates a new versioned entry.
+-- This maps 1:1 to blockchain IdentityCommitted events.
+-- The pramaan_identity_map table remains as "current state" (smart contract storage).
+CREATE TABLE IF NOT EXISTS identity_commitment_log (
+  id BIGSERIAL PRIMARY KEY,
+  uid TEXT NOT NULL,
+  did TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  hash1 TEXT NOT NULL,
+  hash2 TEXT NOT NULL,
+  commitment_root TEXT NOT NULL,
+  circuit_id TEXT NOT NULL,
+  subject_id TEXT NOT NULL,
+  tenant_id TEXT NOT NULL,
+  zk_commitment TEXT,
+  prev_commitment_root TEXT,
+  anchor_batch_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_zk_proof_requests_uid ON zk_proof_requests(uid);
@@ -211,6 +257,11 @@ CREATE INDEX IF NOT EXISTS idx_zk_proof_receipts_uid ON zk_proof_receipts(uid);
 CREATE INDEX IF NOT EXISTS idx_zk_proof_receipts_handoff ON zk_proof_receipts(handoff_id);
 CREATE INDEX IF NOT EXISTS idx_identity_commitments_created ON identity_commitments(created_at);
 CREATE INDEX IF NOT EXISTS idx_recovery_codes_subject ON recovery_codes(subject_id);
+CREATE INDEX IF NOT EXISTS idx_recovery_codes_gen ON recovery_codes(generation_id);
+CREATE INDEX IF NOT EXISTS idx_recovery_nullifiers_code ON recovery_nullifiers(code_id);
+CREATE INDEX IF NOT EXISTS idx_commitment_log_uid ON identity_commitment_log(uid);
+CREATE INDEX IF NOT EXISTS idx_commitment_log_created ON identity_commitment_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_credential_revocations_subject ON credential_revocations(subject_id);
 `;
 
 export async function initializeDatabase(): Promise<void> {
@@ -231,6 +282,7 @@ export async function initializeDatabase(): Promise<void> {
     await client.query(`ALTER TABLE pramaan_identity_map ADD COLUMN IF NOT EXISTS embedding_version INTEGER DEFAULT 1`);
     await client.query(`ALTER TABLE pramaan_identity_map ADD COLUMN IF NOT EXISTS zk_commitment TEXT`);
     await client.query(`ALTER TABLE identity_commitments ADD COLUMN IF NOT EXISTS zk_commitment TEXT`);
+    await client.query(`ALTER TABLE recovery_codes ADD COLUMN IF NOT EXISTS generation_id TEXT DEFAULT 'gen0'`);
 
     await client.query(
       `INSERT INTO tenants (id, name, status)

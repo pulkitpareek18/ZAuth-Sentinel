@@ -189,7 +189,8 @@ pramaanRouter.post("/pramaan/v2/enrollment/complete", requireSession, async (req
     hash1: z.string().min(16),
     hash2: z.string().min(16),
     commitment_root: z.string().min(16),
-    face_embedding: z.string().min(100).max(256).optional()
+    face_embedding: z.string().min(100).max(1024).optional(),
+    skip_recovery_code_regen: z.boolean().optional()
   });
   const parsed = schema.safeParse(req.body ?? {});
   if (!parsed.success) {
@@ -210,7 +211,8 @@ pramaanRouter.post("/pramaan/v2/enrollment/complete", requireSession, async (req
       hash1: parsed.data.hash1,
       hash2: parsed.data.hash2,
       commitmentRoot: parsed.data.commitment_root,
-      faceEmbedding: parsed.data.face_embedding
+      faceEmbedding: parsed.data.face_embedding,
+      skipRecoveryCodeRegen: parsed.data.skip_recovery_code_regen
     });
 
     await writeAuditEvent({
@@ -299,7 +301,7 @@ pramaanRouter.post("/pramaan/v2/proof/submit", async (req, res) => {
     zk_proof: z.unknown(),
     public_signals: z.unknown(),
     handoff_id: z.string().optional(),
-    face_embedding: z.string().min(100).max(256).optional()
+    face_embedding: z.string().min(100).max(1024).optional()
   });
   const parsed = schema.safeParse(req.body ?? {});
   if (!parsed.success) {
@@ -390,7 +392,7 @@ pramaanRouter.post("/pramaan/v2/biometric/verify", requireSession, async (req, r
 
   const schema = z.object({
     uid: z.string().min(3),
-    face_embedding: z.string().min(100).max(256)
+    face_embedding: z.string().min(100).max(1024)
   });
   const parsed = schema.safeParse(req.body ?? {});
   if (!parsed.success) {
@@ -414,7 +416,7 @@ pramaanRouter.post("/pramaan/v2/biometric/verify", requireSession, async (req, r
       traceId: req.traceId,
       payload: {
         uid: parsed.data.uid,
-        similarity: result.similarity,
+        distance: result.distance,
         threshold: result.threshold,
         reason: result.reason ?? null
       }
@@ -422,7 +424,7 @@ pramaanRouter.post("/pramaan/v2/biometric/verify", requireSession, async (req, r
 
     res.status(result.matched ? 200 : 403).json({
       matched: result.matched,
-      similarity: result.similarity,
+      distance: result.distance,
       threshold: result.threshold,
       reason: result.reason
     });

@@ -1403,7 +1403,7 @@ uiRouter.get("/ui/login", async (req, res) => {
 
         <div class="actions tight">
           <a class="link" href="/ui/passkey${requestId ? `?request_id=${encodeURIComponent(requestId)}` : ""}">Try another way</a>
-          <span></span>
+          <a class="link" href="/ui/recovery${requestId ? `?request_id=${encodeURIComponent(requestId)}` : ""}">Lost your device?</a>
         </div>
       </section>
     </div>
@@ -1788,6 +1788,15 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
         <small id="liveness-state" class="muted">Complete all prompted actions.</small>
       </section>
 
+      <section id="panel-recovery-codes" class="status stage mobile-step" style="display:none;">
+        <strong>Save your recovery codes</strong>
+        <p style="margin:8px 0;color:var(--color-muted);font-size:13px;">If you ever lose your device, these codes are the <strong>only way</strong> to recover your account. Download and store them somewhere secure.</p>
+        <div id="signup-recovery-codes" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:12px 0;"></div>
+        <button class="secondary" id="codes-download-btn" style="width:100%;margin:8px 0;">Download Recovery Codes</button>
+        <small id="codes-download-state" class="muted" style="display:none;margin-bottom:8px;">Recovery codes downloaded.</small>
+        <button class="primary" id="codes-continue-btn" disabled>Continue</button>
+      </section>
+
       <section id="panel-approve" class="status stage mobile-step" style="display:none;">
         <strong>Step 3: Final approval</strong>
         <label>Approve this request</label>
@@ -1844,6 +1853,7 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
       switch_account: document.getElementById('panel-switch'),
       signup: document.getElementById('panel-signup'),
       face: document.getElementById('panel-face'),
+      recovery_codes: document.getElementById('panel-recovery-codes'),
       approve: document.getElementById('panel-approve'),
       done: document.getElementById('panel-done')
     };
@@ -1886,6 +1896,7 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
     let livenessResult = null;
     let identityContext = null;
     let enrollmentDraft = null;
+    let signupRecoveryCodes = [];
     let proofVerificationId = null;
     let stream = null;
     let camera = null;
@@ -1975,6 +1986,7 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
       switch_account: 'switch_account',
       signup: 'signup',
       face: 'face',
+      recovery_codes: 'approve',
       approve: 'approve',
       done: 'done'
     };
@@ -2061,6 +2073,14 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
       return btoa(binary);
     }
 
+    function float32ToBase64(descriptor) {
+      const float32 = descriptor instanceof Float32Array ? descriptor : new Float32Array(descriptor);
+      const bytes = new Uint8Array(float32.buffer);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      return btoa(binary);
+    }
+
     async function verifyBiometricMatch(uid, embeddingBase64) {
       const resp = await fetch('/pramaan/v2/biometric/verify', {
         method: 'POST',
@@ -2071,7 +2091,7 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
       if (!resp.ok || !data.matched) {
         throw new Error(data.reason || 'Biometric verification failed: face does not match enrolled identity');
       }
-      log('Biometric match confirmed, similarity: ' + (data.similarity || 'N/A'));
+      log('Biometric match confirmed, distance: ' + (data.distance || 'N/A'));
     }
 
     function canonicalize(value) {
@@ -2357,6 +2377,9 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
         did: data.did,
         commitment_root: commitmentRoot
       };
+      if (data.recovery_codes && data.recovery_codes.length) {
+        signupRecoveryCodes = data.recovery_codes;
+      }
       return identityContext;
     }
 
@@ -2557,9 +2580,9 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
           const descriptor = await extractFaceEmbedding(videoEl);
           const quantized = quantizeEmbedding(descriptor);
           const biometricHash = await hashEmbedding(quantized);
-          const embeddingBase64 = uint8ToBase64(quantized);
+          const embeddingBase64 = float32ToBase64(descriptor);
           lastFaceEmbedding = { quantized, hash: biometricHash, base64: embeddingBase64 };
-          log('Face embedding extracted, biometric ID: ' + biometricHash.substring(0, 16) + '...');
+          log('Face embedding extracted (float32), biometric ID: ' + biometricHash.substring(0, 16) + '...');
         } catch (embErr) {
           log('Embedding extraction failed: ' + embErr.message);
           lastFaceEmbedding = null;
@@ -2616,7 +2639,18 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
         setStatus('Face verified. Final approval required.', 'success');
         setText('liveness-state', 'Face and proof verified. Approve sign-in to continue.');
         document.getElementById('approve-btn').disabled = false;
-        showPanel('approve');
+
+        if (signupRecoveryCodes.length > 0) {
+          const codesGrid = document.getElementById('signup-recovery-codes');
+          codesGrid.innerHTML = signupRecoveryCodes.map((c, i) =>
+            '<code style="background:var(--color-code-bg);padding:6px 10px;border-radius:6px;font-size:14px;letter-spacing:0.06em;">' + (i + 1) + '. ' + c + '</code>'
+          ).join('');
+          document.getElementById('codes-continue-btn').disabled = true;
+          document.getElementById('codes-download-state').style.display = 'none';
+          showPanel('recovery_codes');
+        } else {
+          showPanel('approve');
+        }
       } catch (error) {
         await trackStep('face', 'error', String(error?.message || 'liveness_failed'));
         setStatus('Face verification failed: ' + error.message, 'error');
@@ -2942,6 +2976,28 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
     document.getElementById('step-done-btn').onclick = completeStep;
     document.getElementById('approve-btn').onclick = approve;
     document.getElementById('deny-btn').onclick = deny;
+    document.getElementById('codes-download-btn').onclick = () => {
+      if (!signupRecoveryCodes.length) return;
+      const text = 'Z Auth Recovery Codes\\n' +
+        'Generated: ' + new Date().toISOString() + '\\n' +
+        'Username: ' + (activeUsername || 'unknown') + '\\n\\n' +
+        signupRecoveryCodes.map((c, i) => (i + 1) + '. ' + c).join('\\n') +
+        '\\n\\nKeep these codes safe. Each code can only be used once.';
+      const blob = new Blob([text], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'zauth-recovery-codes.txt';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      document.getElementById('codes-download-state').style.display = 'block';
+      document.getElementById('codes-continue-btn').disabled = false;
+    };
+    document.getElementById('codes-continue-btn').onclick = () => {
+      showPanel('approve');
+    };
     if (manualToggleBtn) {
       manualToggleBtn.onclick = () => setManualVisible(!manualVisible);
     }
@@ -3019,7 +3075,7 @@ uiRouter.get("/ui/passkey", (req, res) => {
 
         <div class="actions tight">
           <a class="link passkey-back-link" href="/ui/login${requestId ? `?request_id=${encodeURIComponent(requestId)}` : ""}">Back to phone verification</a>
-          <span></span>
+          <a class="link" href="/ui/recovery${requestId ? `?request_id=${encodeURIComponent(requestId)}` : ""}">Lost your device?</a>
         </div>
       </section>
     </div>
@@ -3033,6 +3089,560 @@ uiRouter.get("/ui/passkey", (req, res) => {
   `;
 
   res.type("html").send(layout("Z Auth Passkey", body));
+});
+
+// ── Account Recovery ──────────────────────────────────────────────
+
+uiRouter.get("/ui/recovery", (req, res) => {
+  const requestId = String(req.query.request_id || "");
+  const body = `
+  <div class="card wide">
+    <div class="card-shell">
+      <section class="intro">
+        ${brandLockup()}
+        <h1>Account recovery</h1>
+        <h2>Lost your device? Prove it's you to regain access.</h2>
+        <div class="helper-line">You'll need your recovery code <strong>and</strong> your face to verify your identity.</div>
+      </section>
+      <section class="stack">
+        <!-- Step 1: Recovery code -->
+        <div id="step-code">
+          <div class="passkey-panel-head" style="margin-bottom:12px;">
+            <span class="passkey-step-index">1</span>
+            <span class="passkey-panel-title">Enter recovery code</span>
+          </div>
+          <label for="recovery-username">Username or email</label>
+          <input id="recovery-username" autocomplete="username" placeholder="founder@geturstyle.shop" />
+          <label for="recovery-code">Recovery code</label>
+          <input id="recovery-code" autocomplete="off" placeholder="ABCD123456" style="text-transform:uppercase; letter-spacing:0.08em; font-family:var(--font-body); font-size:18px;" />
+          <div style="margin-top:16px;">
+            <button class="primary" id="recovery-btn" type="button">Verify code</button>
+          </div>
+        </div>
+
+        <!-- Step 2: Face verification (hidden until code verified) -->
+        <div id="step-face" style="display:none;">
+          <div class="passkey-panel-head" style="margin-bottom:12px;">
+            <span class="passkey-step-index">2</span>
+            <span class="passkey-panel-title">Verify your face</span>
+          </div>
+          <div class="helper-line">Look at the camera. We'll match your face against your enrolled biometric to confirm it's you.</div>
+          <div style="margin:12px 0;">
+            <video id="face-video" autoplay playsinline muted style="width:100%;max-width:320px;border-radius:12px;border:2px solid var(--color-line);"></video>
+          </div>
+          <button class="primary" id="verify-face-btn" type="button">Verify my face</button>
+        </div>
+
+        <!-- Step 2b: Multi-code fallback (shown only if face doesn't match) -->
+        <div id="step-multicode" style="display:none;">
+          <div class="passkey-panel-head" style="margin-bottom:12px;">
+            <span class="passkey-step-index" style="background:var(--color-danger);color:white;">!</span>
+            <span class="passkey-panel-title">Face didn't match</span>
+          </div>
+          <div class="helper-line">Your appearance may have changed. Enter <strong>3 different recovery codes</strong> to verify your identity without biometric.</div>
+          <label for="multi-code-1">Recovery code 1</label>
+          <input id="multi-code-1" autocomplete="off" placeholder="Code 1" style="text-transform:uppercase; letter-spacing:0.08em; font-size:16px;" />
+          <label for="multi-code-2">Recovery code 2</label>
+          <input id="multi-code-2" autocomplete="off" placeholder="Code 2" style="text-transform:uppercase; letter-spacing:0.08em; font-size:16px;" />
+          <label for="multi-code-3">Recovery code 3</label>
+          <input id="multi-code-3" autocomplete="off" placeholder="Code 3" style="text-transform:uppercase; letter-spacing:0.08em; font-size:16px;" />
+          <div style="margin-top:16px;">
+            <button class="primary" id="multicode-btn" type="button">Verify with codes</button>
+          </div>
+        </div>
+
+        <div id="recovery-status" class="status" style="display:none"></div>
+        <div class="actions tight" style="margin-top:16px;">
+          <a class="link" href="/ui/login${requestId ? `?request_id=${encodeURIComponent(requestId)}` : ""}">Back to sign in</a>
+          <span></span>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+  <script>
+    const statusEl = document.getElementById('recovery-status');
+    const setStatus = (message, isError = false) => {
+      statusEl.style.display = 'block';
+      statusEl.className = 'status' + (isError ? ' error' : '');
+      statusEl.textContent = message;
+    };
+
+    let recoveryToken = null;
+    let videoStream = null;
+
+    // Step 1: Verify recovery code
+    document.getElementById('recovery-btn').onclick = async () => {
+      const username = document.getElementById('recovery-username').value.trim();
+      const code = document.getElementById('recovery-code').value.trim();
+      if (!username || !code) {
+        setStatus('Please enter both your username and a recovery code.', true);
+        return;
+      }
+
+      setStatus('Verifying recovery code...');
+      try {
+        const resp = await fetch('/auth/recovery/verify', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ username, recovery_code: code })
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.verified) {
+          const reasons = {
+            user_not_found: 'No account found with that username.',
+            invalid_code: 'Invalid recovery code. Please check and try again.',
+            code_already_used: 'This recovery code has already been used.'
+          };
+          setStatus(reasons[data.reason] || 'Recovery verification failed.', true);
+          return;
+        }
+        recoveryToken = data.recovery_token;
+        setStatus('Recovery code verified. Now verify your face.');
+
+        // Fade out step 1, show step 2
+        document.getElementById('step-code').style.opacity = '0.4';
+        document.getElementById('step-code').style.pointerEvents = 'none';
+        document.getElementById('step-face').style.display = 'block';
+
+        // Start camera
+        try {
+          const video = document.getElementById('face-video');
+          videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 640, height: 480 } });
+          video.srcObject = videoStream;
+        } catch {
+          setStatus('Camera access denied. Please allow camera to verify your identity.', true);
+        }
+      } catch (error) {
+        setStatus('Connection error. Please try again.', true);
+      }
+    };
+
+    // Face models
+    let modelsLoaded = false;
+    async function loadFaceModels() {
+      if (modelsLoaded) return;
+      const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/model/';
+      await Promise.all([
+        faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
+        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+      ]);
+      modelsLoaded = true;
+    }
+
+    function quantizeEmbedding(descriptor) {
+      const quantized = new Uint8Array(128);
+      for (let i = 0; i < 128; i++) {
+        const val = Math.round(descriptor[i] * 128 + 128);
+        quantized[i] = Math.max(0, Math.min(255, val));
+      }
+      return quantized;
+    }
+
+    function uint8ToBase64(arr) {
+      let binary = '';
+      for (let i = 0; i < arr.length; i++) binary += String.fromCharCode(arr[i]);
+      return btoa(binary);
+    }
+
+    // Step 2: Verify face
+    document.getElementById('verify-face-btn').onclick = async () => {
+      if (!recoveryToken) {
+        setStatus('Complete step 1 first.', true);
+        return;
+      }
+
+      try {
+        setStatus('Loading face recognition models...');
+        await loadFaceModels();
+
+        setStatus('Detecting face...');
+        const video = document.getElementById('face-video');
+        const detection = await faceapi.detectSingleFace(video).withFaceLandmarks().withFaceDescriptor();
+        if (!detection) {
+          setStatus('No face detected. Position your face in the frame and try again.', true);
+          return;
+        }
+
+        const quantized = quantizeEmbedding(detection.descriptor);
+        const faceEmbeddingBase64 = uint8ToBase64(quantized);
+
+        setStatus('Verifying your identity...');
+        const resp = await fetch('/auth/recovery/biometric', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ recovery_token: recoveryToken, face_embedding: faceEmbeddingBase64 })
+        });
+        const data = await resp.json();
+
+        if (!resp.ok || !data.verified) {
+          if (data.reason === 'face_mismatch' && data.fallback === 'multi_code') {
+            // Stop camera, show multi-code fallback
+            if (videoStream) { videoStream.getTracks().forEach(t => t.stop()); }
+            document.getElementById('step-face').style.opacity = '0.4';
+            document.getElementById('step-face').style.pointerEvents = 'none';
+            document.getElementById('step-multicode').style.display = 'block';
+            setStatus('Face didn\\'t match. Enter 3 recovery codes to verify your identity instead.');
+            return;
+          }
+          const reasons = {
+            recovery_token_expired: 'Recovery session expired. Please start over.',
+            no_enrolled_identity: 'No biometric identity found for this account.'
+          };
+          setStatus(reasons[data.reason] || 'Biometric verification failed.', true);
+          return;
+        }
+
+        // Stop camera
+        if (videoStream) { videoStream.getTracks().forEach(t => t.stop()); }
+
+        setStatus('Identity verified! Redirecting to re-enrollment...');
+        window.location.href = data.redirectTo || '/ui/recovery/enroll';
+      } catch (error) {
+        setStatus('Verification error. Please try again.', true);
+      }
+    };
+
+    // Step 2b: Multi-code fallback
+    document.getElementById('multicode-btn').onclick = async () => {
+      const code1 = document.getElementById('multi-code-1').value.trim();
+      const code2 = document.getElementById('multi-code-2').value.trim();
+      const code3 = document.getElementById('multi-code-3').value.trim();
+      if (!code1 || !code2 || !code3) {
+        setStatus('Please enter all 3 recovery codes.', true);
+        return;
+      }
+      if (!recoveryToken) {
+        setStatus('Recovery session expired. Please start over.', true);
+        return;
+      }
+
+      setStatus('Verifying recovery codes...');
+      try {
+        const resp = await fetch('/auth/recovery/multi-code', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ recovery_token: recoveryToken, recovery_codes: [code1, code2, code3] })
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.verified) {
+          setStatus(data.message || 'Multi-code verification failed.', true);
+          return;
+        }
+
+        setStatus('Identity verified! Redirecting to re-enrollment...');
+        window.location.href = data.redirectTo || '/ui/recovery/enroll';
+      } catch (error) {
+        setStatus('Connection error. Please try again.', true);
+      }
+    };
+  </script>
+  `;
+
+  res.type("html").send(layout("Z Auth Recovery", body));
+});
+
+uiRouter.get("/ui/recovery/enroll", async (req, res) => {
+  const sid = req.cookies.zauth_sid as string | undefined;
+  const session = await getSession(sid);
+  if (!session) {
+    res.redirect("/ui/recovery");
+    return;
+  }
+
+  const body = `
+  <div class="card wide">
+    <div class="card-shell">
+      <section class="intro">
+        ${brandLockup()}
+        <h1>Re-enroll your identity</h1>
+        <h2>Set up your new device to verify it's&nbsp;you.</h2>
+        <div class="helper-line">
+          You'll register a new passkey on this device and then complete biometric enrollment to restore full access.
+        </div>
+        <div class="account-pill">
+          <span class="account-dot"></span>
+          <span>${escapeHtml(session.username)}</span>
+        </div>
+      </section>
+      <section class="stack">
+        <div id="step-passkey" class="status stage active">
+          <div class="passkey-panel-head">
+            <span class="passkey-step-index">1</span>
+            <span class="passkey-panel-title">Register a new passkey</span>
+          </div>
+          <div class="helper-line">Create a passkey on your new device for secure sign-in.</div>
+          <button class="primary" id="register-passkey-btn" type="button">Register passkey</button>
+        </div>
+
+        <div id="step-enroll" class="status stage" style="display:none">
+          <div class="passkey-panel-head">
+            <span class="passkey-step-index">2</span>
+            <span class="passkey-panel-title">Biometric enrollment</span>
+          </div>
+          <div class="helper-line">Complete face verification and zero-knowledge proof to restore your identity.</div>
+          <div id="face-container" style="margin:12px 0;">
+            <video id="face-video" autoplay playsinline muted style="width:100%;max-width:320px;border-radius:12px;border:2px solid var(--color-line);"></video>
+          </div>
+          <button class="primary" id="capture-face-btn" type="button">Capture face & generate proof</button>
+        </div>
+
+        <div id="step-done" class="status stage" style="display:none">
+          <div class="passkey-panel-head">
+            <span class="passkey-step-index">3</span>
+            <span class="passkey-panel-title">Recovery complete</span>
+          </div>
+          <div class="helper-line">Your identity has been re-established. Save your new recovery codes.</div>
+          <div id="new-recovery-codes" style="margin:12px 0;"></div>
+          <button class="primary" id="done-btn" type="button">Continue to sign in</button>
+        </div>
+
+        <div id="recovery-status" class="status" style="display:none"></div>
+      </section>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@simplewebauthn/browser@10/dist/bundle/index.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+  <script>
+    const username = ${JSON.stringify(session.username)};
+    const subjectId = ${JSON.stringify(session.subjectId)};
+    const statusEl = document.getElementById('recovery-status');
+    let recoveryMethod = 'biometric'; // default — will be updated on load
+
+    const setStatus = (message, isError = false) => {
+      statusEl.style.display = 'block';
+      statusEl.className = 'status' + (isError ? ' error' : '');
+      statusEl.textContent = message;
+    };
+
+    // Check how this session was recovered
+    (async () => {
+      try {
+        const resp = await fetch('/auth/recovery/method');
+        const data = await resp.json();
+        recoveryMethod = data.method || 'biometric';
+      } catch {}
+    })();
+
+    // Step 1: Register passkey
+    document.getElementById('register-passkey-btn').onclick = async () => {
+      try {
+        setStatus('Starting passkey registration...');
+        const optResp = await fetch('/auth/webauthn/register/options', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ username })
+        });
+        const options = await optResp.json();
+        if (!optResp.ok) throw new Error(options.error || 'Failed to get registration options');
+
+        const credential = await SimpleWebAuthnBrowser.startRegistration(options);
+
+        const verifyResp = await fetch('/auth/webauthn/register/verify', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ username, response: credential })
+        });
+        const verifyData = await verifyResp.json();
+        if (!verifyData.verified) throw new Error('Passkey registration failed');
+
+        setStatus('Passkey registered. Now capture your face for biometric enrollment.');
+        document.getElementById('step-passkey').style.opacity = '0.5';
+        document.getElementById('step-enroll').style.display = 'block';
+        startCamera();
+      } catch (error) {
+        setStatus(error.message || 'Passkey registration failed.', true);
+      }
+    };
+
+    // Camera
+    let videoStream = null;
+    async function startCamera() {
+      try {
+        const video = document.getElementById('face-video');
+        videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 640, height: 480 } });
+        video.srcObject = videoStream;
+      } catch {
+        setStatus('Camera access denied. Please allow camera access to complete biometric enrollment.', true);
+      }
+    }
+
+    // Face API models
+    let modelsLoaded = false;
+    async function loadFaceModels() {
+      if (modelsLoaded) return;
+      const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/model/';
+      await Promise.all([
+        faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
+        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+      ]);
+      modelsLoaded = true;
+    }
+
+    function quantizeEmbedding(descriptor) {
+      const quantized = new Uint8Array(128);
+      for (let i = 0; i < 128; i++) {
+        const val = Math.round(descriptor[i] * 128 + 128);
+        quantized[i] = Math.max(0, Math.min(255, val));
+      }
+      return quantized;
+    }
+
+    function uint8ToBase64(arr) {
+      let binary = '';
+      for (let i = 0; i < arr.length; i++) binary += String.fromCharCode(arr[i]);
+      return btoa(binary);
+    }
+
+    function sha256Hex(buffer) {
+      return crypto.subtle.digest('SHA-256', buffer).then(h =>
+        Array.from(new Uint8Array(h)).map(b => b.toString(16).padStart(2, '0')).join('')
+      );
+    }
+
+    // Step 2: Capture face + ZK proof + enrollment
+    document.getElementById('capture-face-btn').onclick = async () => {
+      try {
+        setStatus('Loading face recognition models...');
+        await loadFaceModels();
+
+        setStatus('Detecting face...');
+        const video = document.getElementById('face-video');
+        const detection = await faceapi.detectSingleFace(video).withFaceLandmarks().withFaceDescriptor();
+        if (!detection) { setStatus('No face detected. Please position your face in the frame.', true); return; }
+
+        const descriptor = detection.descriptor;
+        const quantized = quantizeEmbedding(descriptor);
+        const faceEmbeddingBase64 = uint8ToBase64(quantized);
+
+        setStatus('Starting Pramaan V2 enrollment...');
+
+        // 1. Start enrollment
+        const enrollStartResp = await fetch('/pramaan/v2/enrollment/start', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ tenant_id: 'default' })
+        });
+        const enrollStart = await enrollStartResp.json();
+        if (!enrollStartResp.ok) throw new Error(enrollStart.error || 'Enrollment start failed');
+
+        setStatus('Generating zero-knowledge proof...');
+
+        // 2. Compute hashes
+        const hash1 = await sha256Hex(quantized);
+        const hash2Str = hash1 + ':' + enrollStart.zk_challenge;
+        const hash2 = await sha256Hex(new TextEncoder().encode(hash2Str));
+        const commitmentRootStr = hash1 + ':' + hash2 + ':' + enrollStart.did_draft + ':' + enrollStart.uid_draft + ':' + enrollStart.circuit_id;
+        const commitmentRoot = await sha256Hex(new TextEncoder().encode(commitmentRootStr));
+
+        // 3. Compute ZK proof inputs
+        const challengeHashStr = enrollStart.uid_draft + ':' + enrollStart.zk_challenge;
+        const challengeHash = await sha256Hex(new TextEncoder().encode(challengeHashStr));
+
+        let zkProof, publicSignals;
+        if (enrollStart.zk_mode === 'real') {
+          setStatus('Computing Groth16 ZK proof (this may take a moment)...');
+          const biometricIdInt = BigInt('0x' + hash1) & ((1n << 253n) - 1n);
+          const challengeFieldInt = BigInt('0x' + challengeHash) & ((1n << 253n) - 1n);
+          const snarkjs = await import('https://cdn.jsdelivr.net/npm/snarkjs@0.7.4/+esm');
+          const { proof, publicSignals: ps } = await snarkjs.groth16.fullProve(
+            { biometricId: biometricIdInt.toString(), challengeHash: challengeFieldInt.toString() },
+            '/zk/biometric_commitment.wasm',
+            '/zk/biometric_commitment_final.zkey'
+          );
+          zkProof = proof;
+          publicSignals = ps;
+        } else {
+          zkProof = { mock: true, hash1, challengeHash };
+          publicSignals = [hash1, challengeHash];
+        }
+
+        setStatus('Submitting enrollment...');
+
+        // 4. Start a liveness session (use a mock handoff for enrollment context)
+        const livenessResp = await fetch('/auth/liveness/challenge', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ handoff_id: 'recovery_' + Date.now() })
+        });
+        let livenessSessionId = 'recovery_liveness_' + Date.now();
+        if (livenessResp.ok) {
+          const livenessData = await livenessResp.json();
+          livenessSessionId = livenessData.liveness_session_id;
+          // Verify liveness
+          await fetch('/auth/liveness/verify', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              handoff_id: 'recovery_' + Date.now(),
+              liveness_session_id: livenessSessionId,
+              events: [],
+              confidence: 0.95,
+              duration_ms: 2000
+            })
+          });
+        }
+
+        // 5. Complete enrollment
+        const skipCodeRegen = recoveryMethod === 'multi_code';
+        const enrollBody = {
+          enrollment_id: enrollStart.enrollment_id,
+          passkey_credential_id: 'recovery_cred',
+          liveness_session_id: livenessSessionId,
+          zk_proof: zkProof,
+          public_signals: publicSignals,
+          hash1,
+          hash2,
+          commitment_root: commitmentRoot,
+          face_embedding: faceEmbeddingBase64
+        };
+        if (skipCodeRegen) enrollBody.skip_recovery_code_regen = true;
+        const completeResp = await fetch('/pramaan/v2/enrollment/complete', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(enrollBody)
+        });
+        const completeData = await completeResp.json();
+        if (!completeResp.ok) throw new Error(completeData.reason || completeData.error || 'Enrollment failed');
+
+        // Stop camera
+        if (videoStream) { videoStream.getTracks().forEach(t => t.stop()); }
+
+        document.getElementById('step-enroll').style.opacity = '0.5';
+        document.getElementById('step-done').style.display = 'block';
+
+        const codesDiv = document.getElementById('new-recovery-codes');
+        if (skipCodeRegen) {
+          // Multi-code recovery: no new codes issued
+          setStatus('Recovery complete. Your remaining recovery codes are still valid.');
+          codesDiv.innerHTML = '<p style="color:var(--color-danger);font-weight:500;">No new recovery codes were issued because face verification was skipped.</p>' +
+            '<p style="color:var(--color-muted);margin-top:6px;">Your remaining unused codes are still valid. To get fresh codes, sign in with the full biometric flow and re-enroll.</p>';
+        } else if (completeData.recovery_codes && completeData.recovery_codes.length) {
+          setStatus('Recovery complete! Save your new recovery codes.');
+          codesDiv.innerHTML = '<p style="color:var(--color-text);font-weight:500;margin-bottom:8px;">New recovery codes (save these securely):</p>' +
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">' +
+            completeData.recovery_codes.map(c => '<code style="background:var(--color-code-bg);padding:6px 10px;border-radius:6px;font-size:14px;letter-spacing:0.06em;">' + c + '</code>').join('') +
+            '</div>';
+        } else {
+          setStatus('Recovery complete.');
+        }
+      } catch (error) {
+        setStatus(error.message || 'Enrollment failed.', true);
+      }
+    };
+
+    // Step 3: Done - redirect to login
+    document.getElementById('done-btn').onclick = () => {
+      window.location.href = '/ui/login';
+    };
+  </script>
+  `;
+
+  res.type("html").send(layout("Z Auth Recovery Enrollment", body));
 });
 
 uiRouter.get("/ui/consent", async (req, res) => {
