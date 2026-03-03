@@ -263,6 +263,16 @@ CREATE INDEX IF NOT EXISTS idx_recovery_nullifiers_code ON recovery_nullifiers(c
 CREATE INDEX IF NOT EXISTS idx_commitment_log_uid ON identity_commitment_log(uid);
 CREATE INDEX IF NOT EXISTS idx_commitment_log_created ON identity_commitment_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_credential_revocations_subject ON credential_revocations(subject_id);
+
+-- Performance indexes for high-frequency query paths
+CREATE INDEX IF NOT EXISTS idx_access_tokens_subject ON access_tokens(subject_id);
+CREATE INDEX IF NOT EXISTS idx_access_tokens_expires ON access_tokens(expires_at);
+CREATE INDEX IF NOT EXISTS idx_auth_codes_subject ON auth_codes(subject_id);
+CREATE INDEX IF NOT EXISTS idx_auth_codes_expires ON auth_codes(expires_at);
+CREATE INDEX IF NOT EXISTS idx_passkey_credentials_subject ON passkey_credentials(subject_id);
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_subject ON refresh_tokens(subject_id);
+CREATE INDEX IF NOT EXISTS idx_pramaan_identity_subject ON pramaan_identity_map(subject_id);
+CREATE INDEX IF NOT EXISTS idx_audit_events_tenant_created ON audit_events(tenant_id, created_at);
 `;
 
 export async function initializeDatabase(): Promise<void> {
