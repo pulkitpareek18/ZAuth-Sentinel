@@ -2665,7 +2665,7 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
 
         if (!signupMode && !enrollmentDraft && lastFaceEmbedding) {
           setText('liveness-state', 'Verifying biometric identity...');
-          await verifyBiometricMatch(identity.uid, lastFaceEmbedding.base64);
+          await verifyBiometricCommitment(identity.uid, lastFaceEmbedding.hash);
         }
 
         await runAuthenticationProof(identity.uid);
