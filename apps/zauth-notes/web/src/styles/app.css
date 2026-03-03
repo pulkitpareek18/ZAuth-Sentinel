@@ -84,21 +84,34 @@
   min-width: 140px;
 }
 
-.landing-brand {
+/* ---- Z Notes logo ---- */
+.znotes-logo {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: 10px;
 }
 
-.landing-brand .z-logo-text {
-  font-size: 26px;
+.znotes-logo-mark {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
 
-.landing-brand-name {
-  font-size: 20px;
-  color: var(--color-subtext);
+.znotes-logo-mark svg {
+  width: 34px;
+  height: 34px;
+  display: block;
+}
+
+.znotes-logo-text {
+  font-size: 22px;
+  font-family: var(--font-display);
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
+  color: var(--color-text);
 }
 
 /* ---- Hero section ---- */
@@ -1016,12 +1029,18 @@
     font-size: 34px;
   }
 
-  .landing-brand .z-logo-text {
-    font-size: 22px;
+  .znotes-logo-text {
+    font-size: 18px;
   }
 
-  .landing-brand-name {
-    font-size: 16px;
+  .znotes-logo-mark {
+    width: 28px;
+    height: 28px;
+  }
+
+  .znotes-logo-mark svg {
+    width: 28px;
+    height: 28px;
   }
 
   .landing-hero-section {

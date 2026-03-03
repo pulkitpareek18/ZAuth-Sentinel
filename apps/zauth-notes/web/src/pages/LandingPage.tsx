@@ -1,11 +1,30 @@
 import { useEffect, useRef } from "react";
-import { ZAuthLogo } from "../components/ZAuthLogo";
 
 type LandingPageProps = {
   loginUrl: string;
   authError?: string;
   authMessage?: string;
 };
+
+function ZNotesLogo() {
+  return (
+    <div className="znotes-logo" aria-label="Z Notes">
+      <span className="znotes-logo-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="znotesGrad" x1="3" y1="2.5" x2="21" y2="22" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stopColor="#4285F4" />
+              <stop offset="1" stopColor="#0B57D0" />
+            </linearGradient>
+          </defs>
+          <rect x="2" y="2" width="20" height="20" rx="6" fill="url(#znotesGrad)" />
+          <path d="M7.25 7.75H16.75L7.25 16.25H16.75" stroke="white" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </span>
+      <span className="znotes-logo-text">Z Notes</span>
+    </div>
+  );
+}
 
 export function LandingPage({ loginUrl, authError, authMessage }: LandingPageProps) {
   const observerRef = useRef<IntersectionObserver | null>(null);
@@ -31,12 +50,9 @@ export function LandingPage({ loginUrl, authError, authMessage }: LandingPagePro
       {/* Sticky nav */}
       <nav className="landing-nav">
         <div className="landing-nav-inner">
-          <div className="landing-brand">
-            <ZAuthLogo compact />
-            <span className="landing-brand-name">Z Notes</span>
-          </div>
+          <ZNotesLogo />
           <a className="btn btn-primary landing-nav-cta" href={loginUrl}>
-            Get Started
+            Sign In
           </a>
         </div>
       </nav>
@@ -53,7 +69,7 @@ export function LandingPage({ loginUrl, authError, authMessage }: LandingPagePro
               can access your&nbsp;notes.
             </p>
             <a className="btn btn-primary landing-hero-cta" href={loginUrl}>
-              Get Started with Z&nbsp;Auth
+              Get Started
               <span aria-hidden="true">&rarr;</span>
             </a>
             {authError ? (
@@ -153,23 +169,23 @@ export function LandingPage({ loginUrl, authError, authMessage }: LandingPagePro
         <div className="landing-security-inner">
           <div className="section-header">
             <h2>Security that stays out of your way</h2>
-            <p>Z Auth uses zero-knowledge biometric authentication&mdash;your identity is verified without exposing your data.</p>
+            <p>Zero-knowledge biometric authentication verifies your identity without exposing your data.</p>
           </div>
           <div className="trust-grid">
             <article className="trust-point">
               <div className="trust-icon" aria-hidden="true">&#9673;</div>
               <h3>Biometric sign-in</h3>
-              <p>Authenticate with your face from your phone. No passwords, no codes, no friction.</p>
+              <p>Authenticate with your face. No passwords, no codes, no friction.</p>
             </article>
             <article className="trust-point">
               <div className="trust-icon" aria-hidden="true">&#9726;</div>
               <h3>Zero-knowledge proofs</h3>
-              <p>Your biometric data never leaves your device. We verify your identity without seeing it.</p>
+              <p>Your biometric data never leaves your device. Your identity is verified without being seen.</p>
             </article>
             <article className="trust-point">
               <div className="trust-icon" aria-hidden="true">&#9670;</div>
               <h3>Private by design</h3>
-              <p>Session tokens stay server-side. Your notes are tied to your identity, not a guessable password.</p>
+              <p>Tokens stay server-side. Your notes are tied to your identity, not a guessable password.</p>
             </article>
           </div>
         </div>
@@ -181,7 +197,7 @@ export function LandingPage({ loginUrl, authError, authMessage }: LandingPagePro
           <h2>Ready to take notes the&nbsp;secure&nbsp;way?</h2>
           <p>Get started in under 20 seconds. No passwords required.</p>
           <a className="btn btn-primary landing-hero-cta" href={loginUrl}>
-            Get Started with Z&nbsp;Auth
+            Get Started
             <span aria-hidden="true">&rarr;</span>
           </a>
         </div>
@@ -190,11 +206,8 @@ export function LandingPage({ loginUrl, authError, authMessage }: LandingPagePro
       {/* Footer */}
       <footer className="landing-footer">
         <div className="landing-footer-inner">
-          <div className="landing-brand">
-            <ZAuthLogo compact />
-            <span className="landing-brand-name">Z Notes</span>
-          </div>
-          <p>Secured by Z Auth &middot; &copy; {new Date().getFullYear()}</p>
+          <ZNotesLogo />
+          <p>&copy; {new Date().getFullYear()} Z Notes</p>
         </div>
       </footer>
     </main>
