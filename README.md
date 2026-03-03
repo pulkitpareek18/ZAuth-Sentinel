@@ -49,7 +49,10 @@ apps/
 │   ├── src/services/    # Passkey, ZK, liveness, anchor, audit services
 │   ├── src/routes/      # OIDC, Pramaan, WebAuthn, admin endpoints
 │   ├── contracts/       # ZAuthAnchor.sol (Polygon Amoy)
-│   └── zk/              # Circom circuits + verification keys
+│   ├── zk/              # Circom circuits + verification keys
+│   │   ├── biometric_commitment.circom  # Groth16 ZKP circuit (Poseidon)
+│   │   └── verification_key.json        # Server-side verification key
+│   └── test/            # 60 unit tests (ZK, biometric, crypto)
 ├── zauth-ui/            # Admin console, demo shell, status dashboard
 └── zauth-notes/         # Example relying-party app (OAuth client)
 
