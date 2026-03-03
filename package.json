@@ -6,7 +6,8 @@
   "workspaces": [
     "apps/zauth-core",
     "apps/zauth-ui",
-    "apps/zauth-notes"
+    "apps/zauth-notes",
+    "packages/sdk"
   ],
   "scripts": {
     "build": "npm run build --workspaces",
