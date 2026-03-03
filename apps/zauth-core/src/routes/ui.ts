@@ -841,6 +841,72 @@ video {
   stroke: rgba(129,201,149,0.7);
   transition: stroke 0.4s;
 }
+.face-viewport.scanning .face-frame-ring circle {
+  stroke: rgba(66,133,244,0.75);
+  animation: face-ring-scan 1.5s ease-in-out infinite;
+}
+@keyframes face-ring-scan {
+  0%, 100% { stroke-opacity: 0.5; stroke-width: 2.5; }
+  50% { stroke-opacity: 1; stroke-width: 3.5; }
+}
+.face-viewport.failed .face-frame-ring circle {
+  stroke: rgba(220,53,69,0.75);
+  transition: stroke 0.4s;
+}
+.face-failure {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(220,53,69,0.25);
+  z-index: 5;
+  animation: failure-flash 0.7s ease-out forwards;
+  pointer-events: none;
+}
+.face-failure svg {
+  width: 52px;
+  height: 52px;
+  filter: drop-shadow(0 2px 8px rgba(0,0,0,0.3));
+}
+.face-failure .x-path {
+  stroke-dasharray: 30;
+  stroke-dashoffset: 30;
+  animation: x-draw 0.3s ease-out 0.1s forwards;
+}
+@keyframes failure-flash {
+  0%   { opacity: 0; }
+  20%  { opacity: 1; }
+  80%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes x-draw {
+  to { stroke-dashoffset: 0; }
+}
+.scan-status {
+  text-align: center;
+  font-size: 13px;
+  color: var(--color-muted);
+  margin-top: 8px;
+  min-height: 20px;
+  transition: color 0.3s;
+}
+.scan-status.error { color: var(--color-danger); }
+.scan-status.success { color: var(--color-success); }
+.recovery-step-enter {
+  animation: step-slide-in 0.3s ease-out forwards;
+}
+.recovery-step-exit {
+  animation: step-slide-out 0.3s ease-in forwards;
+}
+@keyframes step-slide-in {
+  from { opacity: 0; transform: translateX(30px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes step-slide-out {
+  from { opacity: 1; transform: translateX(0); }
+  to   { opacity: 0; transform: translateX(-30px); }
+}
 
 footer {
   margin-top: var(--space-5);
@@ -1820,6 +1886,7 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/snarkjs@0.7.4/build/snarkjs.min.js"></script>
+  <script src="/ui/assets/face-utils.js"></script>
   <script>
     const handoffId = ${JSON.stringify(handoffId)};
     const code = ${JSON.stringify(code)};
@@ -2021,65 +2088,13 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
       return btoa(binary).split('+').join('-').split('/').join('_').replace(/=+$/, '');
     };
 
-    async function sha256Hex(input) {
-      const data = new TextEncoder().encode(input);
-      const digest = await crypto.subtle.digest('SHA-256', data);
-      const bytes = Array.from(new Uint8Array(digest));
-      return bytes.map((byte) => byte.toString(16).padStart(2, '0')).join('');
-    }
-
-    let faceApiModelsLoaded = false;
-    async function loadFaceApiModels() {
-      if (faceApiModelsLoaded) return;
-      if (!window.faceapi) throw new Error('face-api.js not loaded');
-      const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model';
-      await Promise.all([
-        faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
-        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
-      ]);
-      faceApiModelsLoaded = true;
-      log('Face recognition models loaded');
-    }
-
-    async function extractFaceEmbedding(videoElement) {
-      await loadFaceApiModels();
-      const detection = await faceapi
-        .detectSingleFace(videoElement)
-        .withFaceLandmarks()
-        .withFaceDescriptor();
-      if (!detection) throw new Error('No face detected for embedding extraction');
-      return detection.descriptor;
-    }
-
-    function quantizeEmbedding(descriptor) {
-      const quantized = new Uint8Array(128);
-      for (let i = 0; i < 128; i++) {
-        const val = Math.round(descriptor[i] * 128 + 128);
-        quantized[i] = Math.max(0, Math.min(255, val));
-      }
-      return quantized;
-    }
-
-    async function hashEmbedding(quantizedBytes) {
-      const digest = await crypto.subtle.digest('SHA-256', quantizedBytes.buffer);
-      const bytes = Array.from(new Uint8Array(digest));
-      return bytes.map((b) => b.toString(16).padStart(2, '0')).join('');
-    }
-
-    function uint8ToBase64(uint8Array) {
-      let binary = '';
-      for (let i = 0; i < uint8Array.byteLength; i++) binary += String.fromCharCode(uint8Array[i]);
-      return btoa(binary);
-    }
-
-    function float32ToBase64(descriptor) {
-      const float32 = descriptor instanceof Float32Array ? descriptor : new Float32Array(descriptor);
-      const bytes = new Uint8Array(float32.buffer);
-      let binary = '';
-      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-      return btoa(binary);
-    }
+    const sha256Hex = ZAuthFace.sha256Hex;
+    const loadFaceApiModels = ZAuthFace.loadFaceApiModels;
+    const extractFaceEmbedding = ZAuthFace.extractFaceEmbedding;
+    const quantizeEmbedding = ZAuthFace.quantizeEmbedding;
+    const hashEmbedding = ZAuthFace.hashEmbedding;
+    const uint8ToBase64 = ZAuthFace.uint8ToBase64;
+    const float32ToBase64 = ZAuthFace.float32ToBase64;
 
     async function verifyBiometricMatch(uid, embeddingBase64) {
       const resp = await fetch('/pramaan/v2/biometric/verify', {
@@ -3126,11 +3141,32 @@ uiRouter.get("/ui/recovery", (req, res) => {
             <span class="passkey-step-index">2</span>
             <span class="passkey-panel-title">Verify your face</span>
           </div>
-          <div class="helper-line">Look at the camera. We'll match your face against your enrolled biometric to confirm it's you.</div>
-          <div style="margin:12px 0;">
-            <video id="face-video" autoplay playsinline muted style="width:100%;max-width:320px;border-radius:12px;border:2px solid var(--color-line);"></video>
+          <div class="helper-line">Look at the camera. We'll automatically scan and match your face.</div>
+
+          <div id="recovery-face-viewport" class="face-viewport" style="margin:12px auto 0;">
+            <video id="face-video" autoplay playsinline muted></video>
+            <div class="face-frame">
+              <svg class="face-frame-ring" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="100" cy="100" r="90" stroke="rgba(255,255,255,0.35)" stroke-width="2.5" stroke-dasharray="8 4" fill="none"/>
+              </svg>
+            </div>
+            <div class="face-success" style="display:none;">
+              <svg viewBox="0 0 52 52" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="26" cy="26" r="24" fill="rgba(46,160,67,0.45)"/>
+                <path class="check-path" d="M15 27 L23 35 L37 19" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+              </svg>
+            </div>
+            <div class="face-failure" style="display:none;">
+              <svg viewBox="0 0 52 52" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="26" cy="26" r="24" fill="rgba(220,53,69,0.45)"/>
+                <path class="x-path" d="M18 18 L34 34" stroke="#fff" stroke-width="3" stroke-linecap="round" fill="none"/>
+                <path class="x-path" d="M34 18 L18 34" stroke="#fff" stroke-width="3" stroke-linecap="round" fill="none"/>
+              </svg>
+            </div>
           </div>
-          <button class="primary" id="verify-face-btn" type="button">Verify my face</button>
+
+          <div id="scan-status" class="scan-status">Preparing camera...</div>
+          <button class="link" id="try-another-btn" type="button" style="display:none;margin:12px auto 0;text-align:center;width:100%;">Try another way</button>
         </div>
 
         <!-- Step 2b: Multi-code fallback (shown only if face doesn't match) -->
@@ -3161,16 +3197,33 @@ uiRouter.get("/ui/recovery", (req, res) => {
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+  <script src="/ui/assets/face-utils.js"></script>
   <script>
     const statusEl = document.getElementById('recovery-status');
+    const scanStatusEl = document.getElementById('scan-status');
+    const viewport = document.getElementById('recovery-face-viewport');
+    const tryAnotherBtn = document.getElementById('try-another-btn');
+
     const setStatus = (message, isError = false) => {
       statusEl.style.display = 'block';
       statusEl.className = 'status' + (isError ? ' error' : '');
       statusEl.textContent = message;
     };
+    const setScanStatus = (text, cls) => {
+      scanStatusEl.textContent = text;
+      scanStatusEl.className = 'scan-status' + (cls ? ' ' + cls : '');
+    };
 
     let recoveryToken = null;
     let videoStream = null;
+
+    // ── Auto-retry constants ──
+    const MAX_ATTEMPTS = 12;
+    const MAX_SERVER_MISMATCHES = 3;
+    const SCAN_INTERVAL_MS = 1500;
+    let scanActive = false;
+    let attempts = 0;
+    let mismatches = 0;
 
     // Step 1: Verify recovery code
     document.getElementById('recovery-btn').onclick = async () => {
@@ -3199,110 +3252,146 @@ uiRouter.get("/ui/recovery", (req, res) => {
           return;
         }
         recoveryToken = data.recovery_token;
-        setStatus('Recovery code verified. Now verify your face.');
+        setStatus('Recovery code verified. Starting face scan...');
 
         // Fade out step 1, show step 2
         document.getElementById('step-code').style.opacity = '0.4';
         document.getElementById('step-code').style.pointerEvents = 'none';
         document.getElementById('step-face').style.display = 'block';
 
-        // Start camera
+        // Start camera + auto-scan
         try {
           const video = document.getElementById('face-video');
-          videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 640, height: 480 } });
-          video.srcObject = videoStream;
-        } catch {
-          setStatus('Camera access denied. Please allow camera to verify your identity.', true);
+          videoStream = await ZAuthFace.startCameraStream(video);
+          setScanStatus('Loading face recognition...');
+          await ZAuthFace.loadFaceApiModels();
+          startAutoScan();
+        } catch (err) {
+          setScanStatus('Camera access denied.', 'error');
+          setStatus('Please allow camera access and reload to try again.', true);
         }
       } catch (error) {
         setStatus('Connection error. Please try again.', true);
       }
     };
 
-    // Face models
-    let modelsLoaded = false;
-    async function loadFaceModels() {
-      if (modelsLoaded) return;
-      const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/model/';
-      await Promise.all([
-        faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
-        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
-      ]);
-      modelsLoaded = true;
+    // ── Auto-scan state machine ──
+    function startAutoScan() {
+      scanActive = true;
+      attempts = 0;
+      mismatches = 0;
+      viewport.classList.add('scanning');
+      viewport.classList.remove('completing', 'failed');
+      runScanLoop();
     }
 
-    function quantizeEmbedding(descriptor) {
-      const quantized = new Uint8Array(128);
-      for (let i = 0; i < 128; i++) {
-        const val = Math.round(descriptor[i] * 128 + 128);
-        quantized[i] = Math.max(0, Math.min(255, val));
-      }
-      return quantized;
-    }
+    async function runScanLoop() {
+      if (!scanActive) return;
 
-    function uint8ToBase64(arr) {
-      let binary = '';
-      for (let i = 0; i < arr.length; i++) binary += String.fromCharCode(arr[i]);
-      return btoa(binary);
-    }
-
-    // Step 2: Verify face
-    document.getElementById('verify-face-btn').onclick = async () => {
-      if (!recoveryToken) {
-        setStatus('Complete step 1 first.', true);
+      attempts++;
+      if (attempts > MAX_ATTEMPTS || mismatches >= MAX_SERVER_MISMATCHES) {
+        onAllFailed();
         return;
       }
 
+      setScanStatus('Scanning... attempt ' + attempts + '/' + MAX_ATTEMPTS);
+
       try {
-        setStatus('Loading face recognition models...');
-        await loadFaceModels();
-
-        setStatus('Detecting face...');
         const video = document.getElementById('face-video');
-        const detection = await faceapi.detectSingleFace(video).withFaceLandmarks().withFaceDescriptor();
-        if (!detection) {
-          setStatus('No face detected. Position your face in the frame and try again.', true);
-          return;
-        }
+        const descriptor = await ZAuthFace.extractFaceEmbedding(video);
 
-        const quantized = quantizeEmbedding(detection.descriptor);
-        const faceEmbeddingBase64 = uint8ToBase64(quantized);
-
-        setStatus('Verifying your identity...');
+        // Face detected — verify with server
+        setScanStatus('Verifying identity...');
+        const embeddingBase64 = ZAuthFace.float32ToBase64(descriptor);
         const resp = await fetch('/auth/recovery/biometric', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ recovery_token: recoveryToken, face_embedding: faceEmbeddingBase64 })
+          body: JSON.stringify({ recovery_token: recoveryToken, face_embedding: embeddingBase64 })
         });
         const data = await resp.json();
 
-        if (!resp.ok || !data.verified) {
-          if (data.reason === 'face_mismatch' && data.fallback === 'multi_code') {
-            // Stop camera, show multi-code fallback
-            if (videoStream) { videoStream.getTracks().forEach(t => t.stop()); }
-            document.getElementById('step-face').style.opacity = '0.4';
-            document.getElementById('step-face').style.pointerEvents = 'none';
-            document.getElementById('step-multicode').style.display = 'block';
-            setStatus('Face didn\\'t match. Enter 3 recovery codes to verify your identity instead.');
-            return;
-          }
+        if (resp.ok && data.verified) {
+          onScanSuccess(data);
+          return;
+        }
+
+        // Server mismatch
+        if (data.reason === 'face_mismatch') {
+          mismatches++;
+          ZAuthFace.showFailureOverlay('recovery-face-viewport');
+          setScanStatus('Face did not match (' + mismatches + '/' + MAX_SERVER_MISMATCHES + '). Retrying...', 'error');
+        } else {
           const reasons = {
             recovery_token_expired: 'Recovery session expired. Please start over.',
             no_enrolled_identity: 'No biometric identity found for this account.'
           };
-          setStatus(reasons[data.reason] || 'Biometric verification failed.', true);
+          scanActive = false;
+          viewport.classList.remove('scanning');
+          setStatus(reasons[data.reason] || 'Verification failed.', true);
+          setScanStatus('Scan stopped.', 'error');
           return;
         }
-
-        // Stop camera
-        if (videoStream) { videoStream.getTracks().forEach(t => t.stop()); }
-
-        setStatus('Identity verified! Redirecting to re-enrollment...');
-        window.location.href = data.redirectTo || '/ui/recovery/enroll';
-      } catch (error) {
-        setStatus('Verification error. Please try again.', true);
+      } catch (err) {
+        // No face detected — keep scanning
+        setScanStatus('No face detected. Keep your face centered. (' + attempts + '/' + MAX_ATTEMPTS + ')');
       }
+
+      // Check limits again after this attempt
+      if (attempts >= MAX_ATTEMPTS || mismatches >= MAX_SERVER_MISMATCHES) {
+        onAllFailed();
+        return;
+      }
+
+      // Schedule next scan
+      setTimeout(runScanLoop, SCAN_INTERVAL_MS);
+    }
+
+    function onScanSuccess(data) {
+      scanActive = false;
+      viewport.classList.remove('scanning');
+      viewport.classList.add('completing');
+      ZAuthFace.showSuccessOverlay('recovery-face-viewport');
+      setScanStatus('Identity verified!', 'success');
+      setStatus('Identity verified! Redirecting to re-enrollment...');
+
+      setTimeout(() => {
+        ZAuthFace.stopCameraStream(videoStream);
+        window.location.href = data.redirectTo || '/ui/recovery/enroll';
+      }, 1200);
+    }
+
+    function onAllFailed() {
+      scanActive = false;
+      viewport.classList.remove('scanning');
+      viewport.classList.add('failed');
+      ZAuthFace.stopCameraStream(videoStream);
+
+      const msg = mismatches >= MAX_SERVER_MISMATCHES
+        ? 'Face did not match after ' + mismatches + ' attempts.'
+        : 'Could not verify your face after ' + MAX_ATTEMPTS + ' attempts.';
+      setScanStatus(msg, 'error');
+      setStatus('Face verification unsuccessful.');
+      tryAnotherBtn.style.display = 'block';
+    }
+
+    // ── "Try another way" → slide to multi-code ──
+    tryAnotherBtn.onclick = () => {
+      const stepFace = document.getElementById('step-face');
+      const stepMulti = document.getElementById('step-multicode');
+
+      stepFace.classList.add('recovery-step-exit');
+      stepFace.addEventListener('animationend', function handler() {
+        stepFace.removeEventListener('animationend', handler);
+        stepFace.style.display = 'none';
+        stepFace.classList.remove('recovery-step-exit');
+        stepMulti.style.display = 'block';
+        stepMulti.classList.add('recovery-step-enter');
+        stepMulti.addEventListener('animationend', function h2() {
+          stepMulti.removeEventListener('animationend', h2);
+          stepMulti.classList.remove('recovery-step-enter');
+        });
+      });
+      setStatus('Enter 3 different recovery codes to verify your identity.');
     };
 
     // Step 2b: Multi-code fallback
@@ -3383,9 +3472,21 @@ uiRouter.get("/ui/recovery/enroll", async (req, res) => {
             <span class="passkey-panel-title">Biometric enrollment</span>
           </div>
           <div class="helper-line">Complete face verification and zero-knowledge proof to restore your identity.</div>
-          <div id="face-container" style="margin:12px 0;">
-            <video id="face-video" autoplay playsinline muted style="width:100%;max-width:320px;border-radius:12px;border:2px solid var(--color-line);"></video>
+          <div id="enroll-face-viewport" class="face-viewport" style="margin:12px auto 0;">
+            <video id="face-video" autoplay playsinline muted></video>
+            <div class="face-frame">
+              <svg class="face-frame-ring" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="100" cy="100" r="90" stroke="rgba(255,255,255,0.35)" stroke-width="2.5" stroke-dasharray="8 4" fill="none"/>
+              </svg>
+            </div>
+            <div class="face-success" style="display:none;">
+              <svg viewBox="0 0 52 52" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="26" cy="26" r="24" fill="rgba(46,160,67,0.45)"/>
+                <path class="check-path" d="M15 27 L23 35 L37 19" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+              </svg>
+            </div>
           </div>
+          <div id="enroll-scan-status" class="scan-status">Waiting for passkey registration...</div>
           <button class="primary" id="capture-face-btn" type="button">Capture face & generate proof</button>
         </div>
 
@@ -3406,16 +3507,23 @@ uiRouter.get("/ui/recovery/enroll", async (req, res) => {
 
   <script src="https://cdn.jsdelivr.net/npm/@simplewebauthn/browser@10/dist/bundle/index.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+  <script src="/ui/assets/face-utils.js"></script>
   <script>
     const username = ${JSON.stringify(session.username)};
     const subjectId = ${JSON.stringify(session.subjectId)};
     const statusEl = document.getElementById('recovery-status');
-    let recoveryMethod = 'biometric'; // default — will be updated on load
+    const enrollScanStatus = document.getElementById('enroll-scan-status');
+    let recoveryMethod = 'biometric';
+    const sha256Hex = ZAuthFace.sha256Hex;
 
     const setStatus = (message, isError = false) => {
       statusEl.style.display = 'block';
       statusEl.className = 'status' + (isError ? ' error' : '');
       statusEl.textContent = message;
+    };
+    const setEnrollScan = (text, cls) => {
+      enrollScanStatus.textContent = text;
+      enrollScanStatus.className = 'scan-status' + (cls ? ' ' + cls : '');
     };
 
     // Check how this session was recovered
@@ -3428,6 +3536,7 @@ uiRouter.get("/ui/recovery/enroll", async (req, res) => {
     })();
 
     // Step 1: Register passkey
+    let videoStream = null;
     document.getElementById('register-passkey-btn').onclick = async () => {
       try {
         setStatus('Starting passkey registration...');
@@ -3452,73 +3561,38 @@ uiRouter.get("/ui/recovery/enroll", async (req, res) => {
         setStatus('Passkey registered. Now capture your face for biometric enrollment.');
         document.getElementById('step-passkey').style.opacity = '0.5';
         document.getElementById('step-enroll').style.display = 'block';
-        startCamera();
+
+        try {
+          const video = document.getElementById('face-video');
+          videoStream = await ZAuthFace.startCameraStream(video);
+          setEnrollScan('Camera ready. Click the button below to capture.');
+        } catch {
+          setStatus('Camera access denied. Please allow camera access.', true);
+          setEnrollScan('Camera denied.', 'error');
+        }
       } catch (error) {
         setStatus(error.message || 'Passkey registration failed.', true);
       }
     };
 
-    // Camera
-    let videoStream = null;
-    async function startCamera() {
-      try {
-        const video = document.getElementById('face-video');
-        videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 640, height: 480 } });
-        video.srcObject = videoStream;
-      } catch {
-        setStatus('Camera access denied. Please allow camera access to complete biometric enrollment.', true);
-      }
-    }
-
-    // Face API models
-    let modelsLoaded = false;
-    async function loadFaceModels() {
-      if (modelsLoaded) return;
-      const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/model/';
-      await Promise.all([
-        faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
-        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
-      ]);
-      modelsLoaded = true;
-    }
-
-    function quantizeEmbedding(descriptor) {
-      const quantized = new Uint8Array(128);
-      for (let i = 0; i < 128; i++) {
-        const val = Math.round(descriptor[i] * 128 + 128);
-        quantized[i] = Math.max(0, Math.min(255, val));
-      }
-      return quantized;
-    }
-
-    function uint8ToBase64(arr) {
-      let binary = '';
-      for (let i = 0; i < arr.length; i++) binary += String.fromCharCode(arr[i]);
-      return btoa(binary);
-    }
-
-    function sha256Hex(buffer) {
-      return crypto.subtle.digest('SHA-256', buffer).then(h =>
-        Array.from(new Uint8Array(h)).map(b => b.toString(16).padStart(2, '0')).join('')
-      );
-    }
-
     // Step 2: Capture face + ZK proof + enrollment
     document.getElementById('capture-face-btn').onclick = async () => {
+      const viewport = document.getElementById('enroll-face-viewport');
       try {
-        setStatus('Loading face recognition models...');
-        await loadFaceModels();
+        setEnrollScan('Loading face recognition...');
+        viewport.classList.add('scanning');
+        await ZAuthFace.loadFaceApiModels();
 
-        setStatus('Detecting face...');
+        setEnrollScan('Detecting face...');
         const video = document.getElementById('face-video');
-        const detection = await faceapi.detectSingleFace(video).withFaceLandmarks().withFaceDescriptor();
-        if (!detection) { setStatus('No face detected. Please position your face in the frame.', true); return; }
+        const descriptor = await ZAuthFace.extractFaceEmbedding(video);
+        const quantized = ZAuthFace.quantizeEmbedding(descriptor);
+        const faceEmbeddingBase64 = ZAuthFace.float32ToBase64(descriptor);
 
-        const descriptor = detection.descriptor;
-        const quantized = quantizeEmbedding(descriptor);
-        const faceEmbeddingBase64 = uint8ToBase64(quantized);
-
+        viewport.classList.remove('scanning');
+        viewport.classList.add('completing');
+        ZAuthFace.showSuccessOverlay('enroll-face-viewport');
+        setEnrollScan('Face captured!', 'success');
         setStatus('Starting Pramaan V2 enrollment...');
 
         // 1. Start enrollment
@@ -3610,7 +3684,7 @@ uiRouter.get("/ui/recovery/enroll", async (req, res) => {
         if (!completeResp.ok) throw new Error(completeData.reason || completeData.error || 'Enrollment failed');
 
         // Stop camera
-        if (videoStream) { videoStream.getTracks().forEach(t => t.stop()); }
+        ZAuthFace.stopCameraStream(videoStream);
 
         document.getElementById('step-enroll').style.opacity = '0.5';
         document.getElementById('step-done').style.display = 'block';
