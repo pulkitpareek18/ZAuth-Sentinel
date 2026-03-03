@@ -1271,66 +1271,8 @@ if (signInTab) signInTab.onclick = () => setMode('signin');
 if (signUpTab) signUpTab.onclick = () => setMode('signup');
 setMode(modeInput && modeInput.value === 'signup' ? 'signup' : 'signin');
 
-const b64urlToBuffer = (value) => {
-  const padded = value.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((value.length + 3) % 4);
-  const binary = atob(padded);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes.buffer;
-};
-
-const bufferToB64url = (buffer) => {
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
-  return btoa(binary).split('+').join('-').split('/').join('_').replace(/=+$/, '');
-};
-
-const toRegistrationCredentialJSON = (credential) => {
-  const response = credential.response;
-  return {
-    id: credential.id,
-    rawId: bufferToB64url(credential.rawId),
-    type: credential.type,
-    response: {
-      clientDataJSON: bufferToB64url(response.clientDataJSON),
-      attestationObject: bufferToB64url(response.attestationObject),
-      transports: response.getTransports ? response.getTransports() : []
-    }
-  };
-};
-
-const toAuthenticationCredentialJSON = (credential) => {
-  const response = credential.response;
-  return {
-    id: credential.id,
-    rawId: bufferToB64url(credential.rawId),
-    type: credential.type,
-    response: {
-      clientDataJSON: bufferToB64url(response.clientDataJSON),
-      authenticatorData: bufferToB64url(response.authenticatorData),
-      signature: bufferToB64url(response.signature),
-      userHandle: response.userHandle ? bufferToB64url(response.userHandle) : null
-    }
-  };
-};
-
-function prepareRegisterOptions(options) {
-  options.challenge = b64urlToBuffer(options.challenge);
-  options.user.id = b64urlToBuffer(options.user.id);
-  if (Array.isArray(options.excludeCredentials)) {
-    options.excludeCredentials = options.excludeCredentials.map((cred) => ({ ...cred, id: b64urlToBuffer(cred.id) }));
-  }
-  return options;
-}
-
-function prepareLoginOptions(options) {
-  options.challenge = b64urlToBuffer(options.challenge);
-  if (Array.isArray(options.allowCredentials)) {
-    options.allowCredentials = options.allowCredentials.map((cred) => ({ ...cred, id: b64urlToBuffer(cred.id) }));
-  }
-  return options;
-}
+const { b64urlToBuffer, bufferToB64url, prepareRegisterOptions, prepareLoginOptions,
+        toRegistrationCredentialJSON, toAuthenticationCredentialJSON } = ZAuthPasskey;
 
 const regButton = document.getElementById('register-btn');
 if (regButton) {
@@ -1496,6 +1438,7 @@ uiRouter.get("/ui/login", async (req, res) => {
     <footer>Phone approval is primary. Passkey fallback stays available for recovery.</footer>
   </div>
 
+  <script src="/ui/assets/passkey-utils.js"></script>
   <script>
     const requestId = ${JSON.stringify(requestId)};
     const initialMode = ${JSON.stringify(mode)};
@@ -1907,6 +1850,7 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
   <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/snarkjs@0.7.4/build/snarkjs.min.js"></script>
   <script src="/ui/assets/face-utils.js"></script>
+  <script src="/ui/assets/passkey-utils.js"></script>
   <script>
     const handoffId = ${JSON.stringify(handoffId)};
     const code = ${JSON.stringify(code)};
@@ -2093,21 +2037,7 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
       }
     };
 
-    const b64urlToBuffer = (value) => {
-      const padded = value.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((value.length + 3) % 4);
-      const binary = atob(padded);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      return bytes.buffer;
-    };
-
-    const bufferToB64url = (buffer) => {
-      const bytes = new Uint8Array(buffer);
-      let binary = '';
-      for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
-      return btoa(binary).split('+').join('-').split('/').join('_').replace(/=+$/, '');
-    };
-
+    const { b64urlToBuffer, bufferToB64url, canonicalize } = ZAuthPasskey;
     const sha256Hex = ZAuthFace.sha256Hex;
     const loadFaceApiModels = ZAuthFace.loadFaceApiModels;
     const extractFaceEmbedding = ZAuthFace.extractFaceEmbedding;
@@ -2115,34 +2045,6 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
     const hashEmbedding = ZAuthFace.hashEmbedding;
     const uint8ToBase64 = ZAuthFace.uint8ToBase64;
     const float32ToBase64 = ZAuthFace.float32ToBase64;
-
-    async function verifyBiometricCommitment(uid, biometricHash) {
-      const resp = await fetch('/pramaan/v2/biometric/verify', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ uid, biometric_hash: biometricHash })
-      });
-      const data = await resp.json();
-      if (!resp.ok || !data.matched) {
-        throw new Error(data.reason || 'Biometric commitment verification failed');
-      }
-      log('Biometric commitment verified');
-    }
-
-    function canonicalize(value) {
-      if (Array.isArray(value)) {
-        return value.map((item) => canonicalize(item));
-      }
-      if (!value || typeof value !== 'object') {
-        return value;
-      }
-      const keys = Object.keys(value).sort();
-      const out = {};
-      for (const key of keys) {
-        out[key] = canonicalize(value[key]);
-      }
-      return out;
-    }
 
     async function buildMockZkProof(uid, challengeHash, extraSignals) {
       const publicSignals = canonicalize({
@@ -2200,51 +2102,8 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
       return buildMockZkProof(uid, challengeHash, extraContext);
     }
 
-    function prepareLoginOptions(options) {
-      options.challenge = b64urlToBuffer(options.challenge);
-      if (Array.isArray(options.allowCredentials)) {
-        options.allowCredentials = options.allowCredentials.map((cred) => ({ ...cred, id: b64urlToBuffer(cred.id) }));
-      }
-      return options;
-    }
-
-    function prepareRegisterOptions(options) {
-      options.challenge = b64urlToBuffer(options.challenge);
-      options.user.id = b64urlToBuffer(options.user.id);
-      if (Array.isArray(options.excludeCredentials)) {
-        options.excludeCredentials = options.excludeCredentials.map((cred) => ({ ...cred, id: b64urlToBuffer(cred.id) }));
-      }
-      return options;
-    }
-
-    const toAuthenticationCredentialJSON = (credential) => {
-      const response = credential.response;
-      return {
-        id: credential.id,
-        rawId: bufferToB64url(credential.rawId),
-        type: credential.type,
-        response: {
-          clientDataJSON: bufferToB64url(response.clientDataJSON),
-          authenticatorData: bufferToB64url(response.authenticatorData),
-          signature: bufferToB64url(response.signature),
-          userHandle: response.userHandle ? bufferToB64url(response.userHandle) : null
-        }
-      };
-    };
-
-    const toRegistrationCredentialJSON = (credential) => {
-      const response = credential.response;
-      return {
-        id: credential.id,
-        rawId: bufferToB64url(credential.rawId),
-        type: credential.type,
-        response: {
-          clientDataJSON: bufferToB64url(response.clientDataJSON),
-          attestationObject: bufferToB64url(response.attestationObject),
-          transports: response.getTransports ? response.getTransports() : []
-        }
-      };
-    };
+    const { prepareLoginOptions, prepareRegisterOptions,
+            toAuthenticationCredentialJSON, toRegistrationCredentialJSON } = ZAuthPasskey;
 
     function getDisplayName(username) {
       const raw = signupDisplayNameInput ? signupDisplayNameInput.value.trim() : '';
@@ -3297,6 +3156,7 @@ uiRouter.get("/ui/recovery", (req, res) => {
 
   <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
   <script src="/ui/assets/face-utils.js"></script>
+  <script src="/ui/assets/passkey-utils.js"></script>
   <script>
     const statusEl = document.getElementById('recovery-status');
     const scanStatusEl = document.getElementById('scan-status');
@@ -3607,6 +3467,7 @@ uiRouter.get("/ui/recovery/enroll", async (req, res) => {
   <script src="https://cdn.jsdelivr.net/npm/@simplewebauthn/browser@10/dist/bundle/index.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
   <script src="/ui/assets/face-utils.js"></script>
+  <script src="/ui/assets/passkey-utils.js"></script>
   <script>
     const username = ${JSON.stringify(session.username)};
     const subjectId = ${JSON.stringify(session.subjectId)};
@@ -3731,14 +3592,7 @@ uiRouter.get("/ui/recovery/enroll", async (req, res) => {
           publicSignals = ps;
         } else {
           // Build mock proof matching server's computeMockProofDigest
-          function canonicalize(value) {
-            if (Array.isArray(value)) return value.map(v => canonicalize(v));
-            if (!value || typeof value !== 'object') return value;
-            const out = {};
-            for (const key of Object.keys(value).sort()) out[key] = canonicalize(value[key]);
-            return out;
-          }
-          publicSignals = canonicalize({
+          publicSignals = ZAuthPasskey.canonicalize({
             uid: enrollStart.uid_draft,
             challenge_hash: challengeHash
           });

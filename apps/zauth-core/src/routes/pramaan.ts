@@ -4,7 +4,6 @@ import { config } from "../config.js";
 import { pool } from "../db/pool.js";
 import { requireSession } from "../middleware/requireSession.js";
 import { writeAuditEvent } from "../services/auditService.js";
-import { createProofChallenge, getIdentity, registerIdentity, verifyProof } from "../services/pramaanService.js";
 import {
   completeEnrollment,
   createProofChallenge as createProofChallengeV2,
@@ -23,109 +22,6 @@ function ensureV2Enabled(res: Response): boolean {
   }
   return true;
 }
-
-pramaanRouter.post("/pramaan/v1/identities/register", requireSession, async (req, res) => {
-  const schema = z.object({
-    tenant_id: z.string().default("default"),
-    canonical_input_proof: z.string().min(8),
-    device_nonce: z.string().min(6),
-    passkey_credential_id: z.string().optional()
-  });
-
-  const parsed = schema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: "invalid_request", details: parsed.error.issues });
-    return;
-  }
-
-  const session = res.locals.session as { subjectId: string; username: string };
-
-  const identity = await registerIdentity({
-    tenantId: parsed.data.tenant_id,
-    subjectId: session.subjectId,
-    canonicalInputProof: parsed.data.canonical_input_proof,
-    deviceNonce: parsed.data.device_nonce
-  });
-
-  await writeAuditEvent({
-    tenantId: parsed.data.tenant_id,
-    actor: session.username,
-    action: "pramaan.identity.register",
-    outcome: "success",
-    traceId: req.traceId,
-    payload: {
-      uid: identity.uid,
-      did: identity.did,
-      passkey_credential_id: parsed.data.passkey_credential_id ?? null
-    }
-  });
-
-  res.status(201).json({
-    uid: identity.uid,
-    did: identity.did,
-    commitment_root: identity.commitmentRoot,
-    attestation_jwt: identity.attestationJwt
-  });
-});
-
-pramaanRouter.post("/pramaan/v1/proof/challenge", async (req, res) => {
-  const schema = z.object({
-    uid: z.string().min(3)
-  });
-
-  const parsed = schema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: "invalid_request" });
-    return;
-  }
-
-  const identity = await getIdentity(parsed.data.uid);
-  if (!identity) {
-    res.status(404).json({ error: "uid_not_found" });
-    return;
-  }
-
-  const challenge = await createProofChallenge(parsed.data.uid);
-  res.status(200).json(challenge);
-});
-
-pramaanRouter.post("/pramaan/v1/proof/verify", async (req, res) => {
-  const schema = z.object({
-    challenge_id: z.string().min(6),
-    uid: z.string().min(3),
-    proof: z.string().min(32)
-  });
-
-  const parsed = schema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: "invalid_request" });
-    return;
-  }
-
-  const result = await verifyProof({
-    challengeId: parsed.data.challenge_id,
-    uid: parsed.data.uid,
-    proof: parsed.data.proof
-  });
-
-  res.status(result.verified ? 200 : 400).json(result);
-});
-
-pramaanRouter.get("/pramaan/v1/identities/:uid", async (req, res) => {
-  const identity = await getIdentity(req.params.uid);
-  if (!identity) {
-    res.status(404).json({ error: "uid_not_found" });
-    return;
-  }
-
-  res.status(200).json({
-    uid: identity.uid,
-    did: identity.did,
-    commitment_root: identity.commitment_root,
-    tenant_id: identity.tenant_id,
-    created_at: identity.created_at
-  });
-});
 
 pramaanRouter.post("/pramaan/v2/enrollment/start", requireSession, async (req, res) => {
   if (!ensureV2Enabled(res)) {
