@@ -41,7 +41,8 @@ const schema = z.object({
   ANCHOR_CHAIN_RPC_URL: z.string().optional(),
   ANCHOR_CHAIN_CONTRACT: z.string().optional(),
   ANCHOR_PRIVATE_KEY: z.string().optional(),
-  ANCHOR_IPFS_API: z.string().optional()
+  ANCHOR_IPFS_API: z.string().optional(),
+  ANCHOR_PINATA_JWT: z.string().optional()
 });
 
 const env = schema.parse(process.env);
@@ -87,5 +88,6 @@ export const config = {
   anchorChainRpcUrl: env.ANCHOR_CHAIN_RPC_URL,
   anchorChainContract: env.ANCHOR_CHAIN_CONTRACT,
   anchorPrivateKey: env.ANCHOR_PRIVATE_KEY,
-  anchorIpfsApi: env.ANCHOR_IPFS_API
+  anchorIpfsApi: env.ANCHOR_IPFS_API,
+  anchorPinataJwt: env.ANCHOR_PINATA_JWT
 } as const;

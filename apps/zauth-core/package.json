@@ -9,7 +9,8 @@
     "start": "node dist/index.js",
     "zk:check": "node scripts/zk-check.mjs",
     "test": "vitest run",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "anchor:deploy": "node scripts/deploy-anchor.mjs"
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.2.2",
@@ -25,6 +26,7 @@
     "snarkjs": "^0.7.4",
     "ulid": "^3.0.1",
     "uuid": "^11.1.0",
+    "ethers": "^6.13.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
@@ -38,6 +40,7 @@
     "supertest": "^7.1.4",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
+    "solc": "^0.8.28",
     "vitest": "^3.2.4"
   },
   "main": "index.js",
