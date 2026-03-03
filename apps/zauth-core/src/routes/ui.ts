@@ -2732,6 +2732,24 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
         await runAuthenticationProof(identity.uid);
         faceComplete = true;
         await trackStep('face', 'completed');
+
+        // Adaptive enrollment: update the stored descriptor with the latest
+        // successful face capture so future logins match against a recent photo.
+        // The original biometricHash is preserved — it's the ZK preimage that
+        // must stay consistent with the server's stored Poseidon commitment.
+        if (!signupMode && !enrollmentDraft && lastFaceEmbedding && lastFaceEmbedding.enrollmentHash && activeUsername) {
+          try {
+            await ZAuthFace.storeEnrollmentBiometric(
+              activeUsername,
+              lastFaceEmbedding.descriptor,
+              lastFaceEmbedding.enrollmentHash  // keep original hash
+            );
+            log('Adaptive enrollment: on-device descriptor updated to latest capture');
+          } catch (updateErr) {
+            log('Adaptive enrollment update failed (non-fatal): ' + updateErr.message);
+          }
+        }
+
         setStatus('Face verified. Final approval required.', 'success');
         setText('liveness-state', 'Face and proof verified. Approve sign-in to continue.');
         document.getElementById('approve-btn').disabled = false;
