@@ -3953,10 +3953,9 @@ uiRouter.get("/ui/consent", async (req, res) => {
 
   const authRequest = await getAuthRequest(requestId);
   if (!authRequest) {
-    res
-      .status(400)
-      .type("html")
-      .send(layout("Expired Request", `<div class="card"><h1>Request expired</h1><h2>Please sign in again.</h2></div>`));
+    // Auth request expired from cache — redirect to login to start a fresh flow.
+    // This handles server restarts wiping in-memory cache or genuinely expired requests.
+    res.redirect("/ui/login");
     return;
   }
 

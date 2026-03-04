@@ -15,7 +15,7 @@ const schema = z.object({
   EXPECTED_ORIGIN: z.string().default("http://localhost:3000"),
   SESSION_COOKIE_SECURE: z.string().default("false"),
   SESSION_TTL_SECONDS: z.coerce.number().default(60 * 60 * 8),
-  AUTH_REQUEST_TTL_SECONDS: z.coerce.number().default(15 * 60),
+  AUTH_REQUEST_TTL_SECONDS: z.coerce.number().default(30 * 60),
   AUTH_DISABLE_SSO: z.string().default("true"),
   TENANT_SALT: z.string().default("dev-salt"),
   POSTGRES_DB: z.string().default("zauth"),

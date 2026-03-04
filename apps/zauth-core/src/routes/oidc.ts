@@ -202,7 +202,9 @@ oidcRouter.post("/oauth2/consent", async (req, res) => {
 
   const authRequest = await getAuthRequest(requestId);
   if (!authRequest) {
-    res.status(400).send("Authorization request expired");
+    // Auth request expired from cache (e.g., server restart wiped in-memory cache,
+    // or user took too long). Redirect to login to start fresh.
+    res.redirect("/ui/login");
     return;
   }
 
