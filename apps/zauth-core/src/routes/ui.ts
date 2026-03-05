@@ -2063,14 +2063,11 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
 
       if (challengeData.zk_mode) zkMode = challengeData.zk_mode;
 
-      // Server provides the enrollment biometric hash in real ZK mode so the
-      // client can use it as the ZK preimage even on new devices without IndexedDB.
-      // Prefer the on-device enrollment hash (verified via face matching), but
-      // fall back to the server-provided hash for cross-device login.
-      if (challengeData.enrollment_hash && lastFaceEmbedding && !lastFaceEmbedding.enrollmentHash) {
-        lastFaceEmbedding.enrollmentHash = challengeData.enrollment_hash;
-        log('Using server-provided enrollment hash as ZK preimage (new device fallback)');
-      }
+      // SECURITY: enrollment_hash is NEVER accepted from the server.
+      // The enrollment hash must come exclusively from on-device IndexedDB
+      // after a successful Euclidean distance face match (threshold 0.6).
+      // This prevents cross-device impersonation where any face could pass
+      // by simply echoing the server-provided hash back as biometric_hash.
 
       const challengeField = challengeData.challenge_field || hexToFieldElement(challengeData.challenge_hash);
       const payload = await buildZkProof(uid, challengeData.challenge_hash, challengeField, {
@@ -2084,8 +2081,9 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
           handoff_id: handoffId
       };
       if (lastFaceEmbedding) {
-        // Send the enrollment hash (from IndexedDB or server-provided fallback).
-        // This provides an extra server-side identity-binding check.
+        // Send the enrollment hash from on-device IndexedDB (set after successful
+        // Euclidean distance face match). This enables server-side identity binding.
+        // Without this, the server rejects the proof to prevent impersonation.
         if (lastFaceEmbedding.enrollmentHash) {
           submitBody.biometric_hash = lastFaceEmbedding.enrollmentHash;
         }
@@ -2531,12 +2529,11 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
               lastFaceEmbedding.enrollmentHash = enrollment.biometricHash;
               log('Using enrollment biometric hash as ZK preimage');
             } else {
-              // No on-device enrollment: this is the first login on this device.
-              // The live face hash will be used as ZK preimage. The server-side
-              // commitment check will reject it if it doesn't match the enrolled
-              // biometric (Poseidon(live_hash) != stored zk_commitment).
-              // This is safe because the server enforces commitment binding.
-              log('No on-device enrollment found — first login on this device. Server will verify commitment.');
+              // No on-device enrollment: first login on this device.
+              // Without the enrollment hash, the server will reject the proof
+              // (biometric_hash_required). User must use QR handoff from their
+              // enrolled device, or re-enroll via recovery codes.
+              log('No on-device enrollment found — server will require biometric hash from enrolled device.');
             }
           } catch (matchErr) {
             if (matchErr.message.includes('does not match')) {
@@ -2552,22 +2549,10 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
         faceComplete = true;
         await trackStep('face', 'completed');
 
-        // Adaptive enrollment: update the stored descriptor with the latest
-        // successful face capture so future logins match against a recent photo.
-        // The original biometricHash is preserved — it's the ZK preimage that
-        // must stay consistent with the server's stored Poseidon commitment.
-        if (!signupMode && !enrollmentDraft && lastFaceEmbedding && lastFaceEmbedding.enrollmentHash && activeUsername) {
-          try {
-            await ZAuthFace.storeEnrollmentBiometric(
-              activeUsername,
-              lastFaceEmbedding.descriptor,
-              lastFaceEmbedding.enrollmentHash  // keep original hash
-            );
-            log('Adaptive enrollment: on-device descriptor updated to latest capture');
-          } catch (updateErr) {
-            log('Adaptive enrollment update failed (non-fatal): ' + updateErr.message);
-          }
-        }
+        // SECURITY: Adaptive enrollment (updating stored descriptor after login)
+        // has been removed to prevent gradual biometric drift where the stored
+        // descriptor could slowly shift to match a different person over time.
+        // The enrollment descriptor from initial registration is immutable.
 
         setStatus('Face verified. Final approval required.', 'success');
         setText('liveness-state', 'Face and proof verified. Approve sign-in to continue.');

@@ -279,7 +279,6 @@ export async function createProofChallenge(input: {
   challengeField?: string;
   circuitId: string;
   expiresAt: string;
-  enrollmentHash?: string;
 }> {
   const identity = await pool.query<{ uid: string; biometric_hash: string | null }>(
     `SELECT uid, biometric_hash FROM pramaan_identity_map WHERE uid = $1`,
@@ -305,13 +304,11 @@ export async function createProofChallenge(input: {
   const challengeHash = sha256(`${input.uid}:${challenge}`);
   const challengeField = config.zkVerifierMode === "real" ? hexToFieldElement(challengeHash) : undefined;
 
-  // In real ZK mode, return the enrollment biometric hash so the client can use
-  // it as the ZK preimage even on new devices without IndexedDB enrollment data.
-  // This is safe: biometric_hash is a one-way SHA-256 of the quantized face
-  // embedding — the raw biometric never leaves the device.
-  const enrollmentHash = config.zkVerifierMode === "real"
-    ? (identity.rows[0].biometric_hash ?? undefined)
-    : undefined;
+  // SECURITY: enrollment_hash is NEVER sent to the client.
+  // The biometric hash (ZK preimage) must only come from on-device IndexedDB
+  // after a successful face match. Sending it in the challenge response would
+  // allow any device to construct a valid ZK proof without verifying the face,
+  // completely bypassing biometric identity verification.
 
   return {
     proofRequestId,
@@ -319,8 +316,7 @@ export async function createProofChallenge(input: {
     challengeHash,
     challengeField,
     circuitId: config.zkCircuitId,
-    expiresAt: expires.rows[0]?.expires_at ?? new Date(Date.now() + 5 * 60 * 1000).toISOString(),
-    enrollmentHash
+    expiresAt: expires.rows[0]?.expires_at ?? new Date(Date.now() + 5 * 60 * 1000).toISOString()
   };
 }
 
@@ -410,10 +406,17 @@ export async function submitProof(input: {
     }
     logger.info("Biometric hash verified", { uid: request.uid });
   } else if (!input.biometricHash && storedBiometricHash) {
-    // New device login — no enrollment hash available on client.
-    // This is normal: mobile phone doesn't have desktop's IndexedDB enrollment.
-    // Log for audit trail but allow login to proceed.
-    logger.info("No biometric hash submitted (new device login)", { uid: request.uid });
+    // SECURITY: Reject login when no biometric_hash is submitted but one
+    // is stored from enrollment. This prevents impersonation on new devices
+    // where no on-device face matching occurred. The client MUST have the
+    // original enrollment hash from IndexedDB (verified via face matching)
+    // to authenticate. Cross-device login uses QR handoff from the enrolled
+    // device, or the user must re-enroll via recovery codes.
+    logger.warn("No biometric hash submitted — rejecting (on-device enrollment required)", {
+      uid: request.uid,
+      storedPrefix: storedBiometricHash.substring(0, 12)
+    });
+    throw new Error("biometric_hash_required");
   }
 
   // ZK proof verification: proves identity binding without revealing biometric data.
