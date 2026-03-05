@@ -29,6 +29,7 @@ Z Auth combines WebAuthn passkeys, face-based liveness verification, and Groth16
 
 - **Zero-Knowledge Biometric Proofs** — Real Groth16 circuits (Circom + snarkjs) prove identity without revealing biometric data. The server verifies a Poseidon commitment, never the face itself.
 - **Client-Side Face Matching** — Face embeddings are extracted, quantized, and matched entirely in the browser via face-api.js. Only a SHA-256 hash of the quantized embedding is transmitted.
+- **Cross-Device ZK Authentication** — Enrollment hash is securely provided during authentication challenges, enabling seamless ZK proof generation on new devices without local biometric storage.
 - **WebAuthn Passkeys** — FIDO2 discoverable credentials eliminate passwords. No server-side secrets, no phishing vectors.
 - **Standards-Compliant OIDC** — Full OAuth 2.0 Authorization Code flow with PKCE (S256), token refresh, revocation, and a signed JWKS endpoint.
 - **Blockchain Audit Anchoring** — Hash-chained audit events with optional Merkle root anchoring to Polygon and metadata pinning to IPFS.
@@ -77,6 +78,8 @@ apps/
 │   └── assets/              # Static assets (logo, fonts)
 ├── zauth-ui/                # Admin console + status dashboard
 └── zauth-notes/             # Reference relying-party app (OAuth client)
+    ├── src/                 # Express backend (OAuth callback, PostgreSQL)
+    └── web/                 # React 18 + Vite frontend
 
 packages/
 └── sdk/                     # @zauth/sdk — OIDC client library
@@ -99,6 +102,7 @@ docker/
 | **Blockchain** | Polygon Amoy, Solidity 0.8.24, ethers.js v6 |
 | **Storage** | IPFS via Pinata REST API |
 | **Backend** | Node.js 20, Express, TypeScript |
+| **Frontend** | React 18, Vite, CSS design tokens (light + dark mode) |
 | **Database** | PostgreSQL 16 (append-only audit model) |
 | **Cache** | Redis 7 (sessions, challenges, handoff state) |
 | **Reverse Proxy** | Caddy 2 (automatic TLS via Let's Encrypt) |
@@ -130,9 +134,11 @@ make up-dev
 | **Admin Console** | [console.geturstyle.shop](https://console.geturstyle.shop) |
 | **OIDC Discovery** | [auth.geturstyle.shop/.well-known/openid-configuration](https://auth.geturstyle.shop/.well-known/openid-configuration) |
 
-## Authentication Flows
+## Authentication Flow
 
 ### Pramaan V2 — ZK Biometric Authentication (AAL2)
+
+All authentication flows require face verification with zero-knowledge proof generation (AAL2:zk assurance level). The primary flow uses cross-device QR handoff:
 
 ```
 Desktop                    Phone                      Server
@@ -151,11 +157,26 @@ Desktop                    Phone                      Server
   │ ← Poll (approved) → session + consent redirect ────┤
 ```
 
+**Cross-device support**: When authenticating from a new device (no local enrollment data), the server securely provides the enrollment hash during the challenge phase so the ZK proof can be generated with the correct Poseidon preimage.
+
 ### Account Recovery
 
 1. Enter one of eight recovery codes generated at enrollment
 2. Verify biometric commitment or provide three-of-eight codes
 3. Old passkeys revoked, new passkey + recovery codes issued
+
+## Z Notes — Reference Application
+
+Z Notes is a full-featured notes app that demonstrates Z Auth integration as a relying party. It showcases the complete OAuth 2.0 + PKCE flow with ZK biometric authentication.
+
+**Stack**: React 18 + Vite + TypeScript frontend, Express + PostgreSQL backend
+
+**Landing page features**:
+- Professional conversion-focused design with dark mode support
+- "How It Works" visual flow showing the 3-step ZK authentication process
+- Security deep-dive section with ZK flow diagram and privacy data comparison
+- Patent and trust section highlighting Indian Patent 202311041001
+- Full responsive design (mobile, tablet, desktop)
 
 ## API Reference
 
@@ -176,7 +197,7 @@ Desktop                    Phone                      Server
 |--------|------|-------------|
 | `POST` | `/pramaan/v2/enrollment/start` | Begin identity enrollment |
 | `POST` | `/pramaan/v2/enrollment/complete` | Finalize with ZK proof |
-| `POST` | `/pramaan/v2/proof/challenge` | Request authentication challenge |
+| `POST` | `/pramaan/v2/proof/challenge` | Request authentication challenge (includes enrollment hash) |
 | `POST` | `/pramaan/v2/proof/submit` | Submit Groth16 proof for verification |
 | `GET` | `/pramaan/v2/identity/me` | Current identity context |
 
@@ -228,6 +249,7 @@ const user = await client.getUserInfo(tokens.access_token);
 | **No biometric templates server-side** | Face matching is client-side only; server stores SHA-256 hashes |
 | **Zero-knowledge identity proofs** | Groth16 circuit with Poseidon commitment binding |
 | **No passwords** | WebAuthn discoverable credentials (passkeys) |
+| **Cross-device ZK support** | Enrollment hash provided in challenge for new-device authentication |
 | **Tamper-evident audit trail** | SHA-256 hash-chained events, blockchain-anchorable |
 | **Nullifier-based consumption** | Recovery codes and proof requests use insert-only nullifiers |
 | **PKCE S256 enforced** | All OAuth flows require proof key for code exchange |
