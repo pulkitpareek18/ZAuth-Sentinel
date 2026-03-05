@@ -2065,7 +2065,7 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
 
       // SECURITY: enrollment_hash is NEVER accepted from the server.
       // The enrollment hash must come exclusively from on-device IndexedDB
-      // after a successful Euclidean distance face match (threshold 0.6).
+      // after a successful Euclidean distance face match (threshold 0.55).
       // This prevents cross-device impersonation where any face could pass
       // by simply echoing the server-provided hash back as biometric_hash.
 
@@ -2527,7 +2527,7 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
 
         // Patent-aligned biometric identity verification:
         // 1. Retrieve the enrollment descriptor from on-device IndexedDB
-        // 2. Euclidean distance match: live face vs enrollment (threshold 0.6)
+        // 2. Euclidean distance match: live face vs enrollment (threshold 0.55)
         // 3. If matched, use the ORIGINAL enrollment hash as ZK preimage
         //    so Poseidon(preimage) matches the server's stored zk_commitment
         // Raw embeddings NEVER leave the device.
@@ -2548,7 +2548,7 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
               lastFaceEmbedding.descriptor,
               onDeviceEnrollment.descriptor
             );
-            log('Biometric match distance: ' + match.distance.toFixed(4) + ' (threshold: 0.6)');
+            log('Biometric match distance: ' + match.distance.toFixed(4) + ' (threshold: 0.55)');
             if (!match.matched) {
               throw new Error('Face does not match enrolled identity (distance: ' + match.distance.toFixed(3) + '). Please try again or use recovery codes.');
             }

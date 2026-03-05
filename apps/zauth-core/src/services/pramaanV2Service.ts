@@ -419,7 +419,7 @@ export async function submitProof(input: {
   // was stored during enrollment. This provides an extra identity-binding check.
   //
   // IMPORTANT: The client only sends biometric_hash when it has an on-device
-  // enrollment with a verified face match (Euclidean distance < 0.6).
+  // enrollment with a verified face match (Euclidean distance < 0.55).
   // On new devices (no IndexedDB enrollment), biometric_hash is omitted.
   // In that case, identity assurance comes from:
   //   - Liveness detection (blink/head turn challenges)
@@ -553,12 +553,12 @@ export async function getProofReceipt(verificationId: string): Promise<{
 // ── Server-side cross-device face verification ──
 // Uses quantized descriptors (Uint8Array[128]) stored as base64.
 // Computes Euclidean distance between enrolled and live descriptors.
-// Threshold: 76.8 (= 0.6 × 128, scaled from float to quantized range).
+// Threshold: 70.4 (= 0.55 × 128, scaled from float to quantized range).
 //   Same person: quantized distance ~38-64  (float ~0.3-0.5)
-//   Different person: quantized distance ~102+ (float ~0.8+)
+//   Different person: quantized distance ~76+ (float ~0.59+)
 // Privacy: quantized descriptors are lossy — cannot reconstruct the original face.
 // Security: requires passkey session (requireSession middleware) + subject_id ownership check.
-const QUANTIZED_MATCH_THRESHOLD = 76.8;
+const QUANTIZED_MATCH_THRESHOLD = 70.4;
 
 export async function verifyFaceDescriptor(input: {
   uid: string;

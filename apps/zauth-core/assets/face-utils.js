@@ -179,7 +179,7 @@
 
   /**
    * Compute Euclidean distance between two Float32Array descriptors.
-   * face-api.js uses L2 distance: same person < 0.6, different > 0.6.
+   * face-api.js uses L2 distance: same person < 0.55, different > 0.55.
    *
    * @param {Float32Array} a - first descriptor (128-dim)
    * @param {Float32Array} b - second descriptor (128-dim)
@@ -200,7 +200,7 @@
   // We store the enrollment descriptor + hash in IndexedDB so that
   // during login, the client can:
   //   1. Capture a new face and match it against the enrolled descriptor
-  //      using Euclidean distance (fuzzy matching, threshold 0.6)
+  //      using Euclidean distance (fuzzy matching, threshold 0.55)
   //   2. If matched, use the ORIGINAL enrollment hash as the ZK preimage
   //      so Poseidon(preimage) matches the stored server-side commitment
   // Raw embeddings NEVER leave the device.
@@ -291,15 +291,15 @@
 
   /**
    * Match a live face descriptor against the enrolled descriptor.
-   * Uses Euclidean distance — face-api.js threshold: same person < 0.6.
+   * Uses Euclidean distance — face-api.js threshold: same person < 0.55.
    *
    * @param {Float32Array} liveDescriptor - fresh capture from camera
    * @param {Float32Array} enrolledDescriptor - stored from enrollment
-   * @param {number} [threshold=0.6] - max distance to consider same person
+   * @param {number} [threshold=0.55] - max distance to consider same person
    * @returns {{matched: boolean, distance: number}}
    */
   function matchDescriptors(liveDescriptor, enrolledDescriptor, threshold) {
-    threshold = threshold || 0.6;
+    threshold = threshold || 0.55;
     var dist = euclideanDistance(liveDescriptor, enrolledDescriptor);
     return {
       matched: dist < threshold,

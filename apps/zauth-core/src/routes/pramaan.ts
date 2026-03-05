@@ -295,7 +295,7 @@ pramaanRouter.get("/pramaan/v2/identity/me", requireSession, async (_req, res) =
 // Security layers (all required):
 //   1. Passkey authentication (requireSession middleware)
 //   2. Liveness detection (blink/turn challenges, already completed)
-//   3. Server-side face matching (quantized Euclidean distance < 76.8)
+//   3. Server-side face matching (quantized Euclidean distance < 70.4)
 //   4. Subject ownership check (prevents cross-user queries)
 //   5. Rate limiting (5 requests per minute per IP)
 //
