@@ -259,6 +259,14 @@ oidcRouter.post("/oauth2/consent", async (req, res) => {
   const sid = req.cookies.zauth_sid as string | undefined;
   const session = await getSession(sid);
   if (!session) {
+    // If we're on the signed payload path, the session was likely already consumed
+    // by a prior consent POST (double-submit). The first POST handled everything —
+    // redirect to the app so the browser doesn't override the successful callback.
+    if (fromSignedPayload) {
+      logger.info("consent POST: session already consumed (duplicate submission), redirecting to app", { requestId });
+      res.redirect(authRequest.redirectUri);
+      return;
+    }
     res.redirect(`/ui/login?request_id=${encodeURIComponent(requestId)}`);
     return;
   }

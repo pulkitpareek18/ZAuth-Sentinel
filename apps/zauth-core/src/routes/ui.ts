@@ -4029,7 +4029,7 @@ uiRouter.get("/ui/consent", async (req, res) => {
           </ul>
         </div>
 
-        <form method="post" action="/oauth2/consent">
+        <form method="post" action="/oauth2/consent" id="consent-form">
           <input type="hidden" name="request_id" value="${escapeHtml(requestId)}" />
           <input type="hidden" name="_consent_payload" value="${escapeHtml(consentPayload)}" />
           <input type="hidden" name="_consent_sig" value="${consentSig}" />
@@ -4038,6 +4038,14 @@ uiRouter.get("/ui/consent", async (req, res) => {
             <button class="primary" name="decision" value="allow" type="submit">Continue</button>
           </div>
         </form>
+        <script>
+          document.getElementById('consent-form').addEventListener('submit', function(e) {
+            if (this.dataset.submitted) { e.preventDefault(); return; }
+            this.dataset.submitted = '1';
+            var btns = this.querySelectorAll('button[type="submit"]');
+            for (var i = 0; i < btns.length; i++) { btns[i].disabled = true; btns[i].style.opacity = '0.6'; }
+          });
+        </script>
 
         <form method="post" action="/auth/logout">
           <div class="actions tight"><button class="link" type="submit">Use another account</button><span></span></div>
