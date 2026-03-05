@@ -26,10 +26,12 @@ jobs:
           script: |
             set -euo pipefail
             cd ${{ secrets.VPS_DEPLOY_PATH }}
-            git fetch --all
-            git checkout ${{ github.sha }}
+            git fetch --all --prune
+            git checkout -f ${{ github.sha }} || (git reset --hard origin/main && git checkout -f ${{ github.sha }})
             printf "%s" "${{ secrets.PROD_ENV_FILE }}" > env/.env.prod
             export COMPOSE_PROJECT_NAME=zauth_prod
-            docker compose -f docker/compose.base.yml -f docker/compose.prod.yml --env-file env/.env.prod up -d --build --remove-orphans
+            docker container prune -f
+            docker compose -f docker/compose.base.yml -f docker/compose.prod.yml --env-file env/.env.prod down --remove-orphans --timeout 30
+            docker compose -f docker/compose.base.yml -f docker/compose.prod.yml --env-file env/.env.prod up -d --build
             docker image prune -f
             ./scripts/smoke.sh
