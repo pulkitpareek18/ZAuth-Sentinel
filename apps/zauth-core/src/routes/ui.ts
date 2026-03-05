@@ -2140,6 +2140,13 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
       if (biometricHashPayload) {
         enrollBody.biometric_hash = biometricHashPayload;
       }
+      // Cross-device verification: also send the quantized descriptor (128 bytes, lossy)
+      // so the server can match faces on new devices via Euclidean distance.
+      // Only the quantized Uint8Array is sent — raw Float32Array stays on-device.
+      if (lastFaceEmbedding && lastFaceEmbedding.quantized) {
+        enrollBody.enrollment_descriptor = ZAuthFace.uint8ToBase64(lastFaceEmbedding.quantized);
+        log('Including quantized enrollment descriptor for cross-device verification');
+      }
       const resp = await fetch('/pramaan/v2/enrollment/complete', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -2530,13 +2537,50 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
               log('Using enrollment biometric hash as ZK preimage');
             } else {
               // No on-device enrollment: first login on this device.
-              // Without the enrollment hash, the server will reject the proof
-              // (biometric_hash_required). User must use QR handoff from their
-              // enrolled device, or re-enroll via recovery codes.
-              log('No on-device enrollment found — server will require biometric hash from enrolled device.');
+              // Use server-side quantized descriptor matching to verify identity
+              // and retrieve the enrollment hash for ZK proof construction.
+              log('No on-device enrollment — attempting server-side face verification...');
+              setText('liveness-state', 'Verifying identity with server...');
+
+              const liveQuantized = quantizeEmbedding(lastFaceEmbedding.descriptor);
+              const verifyResp = await fetch('/pramaan/v2/identity/verify-face', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({
+                  uid: identity.uid,
+                  live_descriptor: ZAuthFace.uint8ToBase64(liveQuantized)
+                })
+              });
+              const verifyData = await verifyResp.json();
+
+              if (!verifyResp.ok || !verifyData.matched) {
+                const reason = verifyData.reason || 'Unknown error';
+                if (reason === 'no_enrollment_descriptor') {
+                  throw new Error('This account was enrolled before cross-device verification was available. Please use your original device or re-enroll via recovery codes.');
+                }
+                throw new Error('Face does not match enrolled identity. '
+                  + (reason === 'face_mismatch' ? 'Distance: ' + (verifyData.distance || '?') + '. ' : '')
+                  + 'Use recovery codes or your original device.');
+              }
+
+              // Server confirmed face match — use returned enrollment_hash
+              lastFaceEmbedding.enrollmentHash = verifyData.enrollment_hash;
+              log('Server-side face match confirmed (distance: ' + (verifyData.distance || '?') + ')');
+
+              // Cache enrollment on this device for future logins (no more server calls needed)
+              try {
+                await ZAuthFace.storeEnrollmentBiometric(
+                  activeUsername, lastFaceEmbedding.descriptor, verifyData.enrollment_hash
+                );
+                log('Enrollment cached on new device for future logins.');
+              } catch (cacheErr) {
+                log('Warning: could not cache enrollment on device: ' + cacheErr.message);
+              }
             }
           } catch (matchErr) {
-            if (matchErr.message.includes('does not match')) {
+            if (matchErr.message.includes('does not match') ||
+                matchErr.message.includes('enrolled before cross-device') ||
+                matchErr.message.includes('recovery codes')) {
               throw matchErr;
             }
             // IndexedDB failures are non-fatal — server-side commitment
@@ -3574,6 +3618,10 @@ uiRouter.get("/ui/recovery/enroll", async (req, res) => {
           biometric_hash: biometricHash
         };
         if (skipCodeRegen) enrollBody.skip_recovery_code_regen = true;
+        // Cross-device verification: include quantized descriptor for server-side face matching
+        if (quantized) {
+          enrollBody.enrollment_descriptor = ZAuthFace.uint8ToBase64(quantized);
+        }
         const completeResp = await fetch('/pramaan/v2/enrollment/complete', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },

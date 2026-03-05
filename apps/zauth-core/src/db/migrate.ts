@@ -50,6 +50,13 @@ const migrations: Migration[] = [
     sql: `
       ALTER TABLE identity_commitments ADD COLUMN IF NOT EXISTS zk_commitment TEXT;
     `
+  },
+  {
+    id: "006",
+    name: "add_enrollment_descriptor",
+    sql: `
+      ALTER TABLE pramaan_identity_map ADD COLUMN IF NOT EXISTS enrollment_descriptor TEXT;
+    `
   }
 ];
 

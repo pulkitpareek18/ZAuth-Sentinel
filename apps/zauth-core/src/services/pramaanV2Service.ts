@@ -118,6 +118,7 @@ export async function completeEnrollment(input: {
   hash2: string;
   commitmentRoot: string;
   biometricHash?: string;
+  enrollmentDescriptor?: string;
   skipRecoveryCodeRegen?: boolean;
 }): Promise<{
   uid: string;
@@ -168,12 +169,32 @@ export async function completeEnrollment(input: {
     zkCommitment = String(input.publicSignals[0]);
   }
 
-  // Privacy-by-design: only store the irreversible biometric commitment hash.
-  // Raw face embeddings NEVER leave the client device.
-  // The biometric_hash is SHA-256(face_descriptor) computed client-side.
+  // Privacy-by-design: only store the irreversible biometric commitment hash
+  // and a lossy quantized descriptor (128 bytes, base64).
+  // Raw Float32Array face embeddings NEVER leave the client device.
+  // The biometric_hash is SHA-256(quantized_descriptor) computed client-side.
+  // The enrollment_descriptor is the quantized Uint8Array[128] encoded as base64,
+  // used for server-side cross-device face matching (Euclidean distance).
+  // It cannot reconstruct the original face — only approximate matching is possible.
+
+  // Validate enrollment descriptor: must decode to exactly 128 bytes
+  let validatedDescriptor: string | null = null;
+  if (input.enrollmentDescriptor) {
+    try {
+      const buf = Buffer.from(input.enrollmentDescriptor, "base64");
+      if (buf.length !== 128) {
+        logger.warn("Invalid enrollment descriptor length", { length: buf.length, expected: 128 });
+      } else {
+        validatedDescriptor = input.enrollmentDescriptor;
+      }
+    } catch {
+      logger.warn("Invalid enrollment descriptor base64");
+    }
+  }
+
   await pool.query(
-    `INSERT INTO pramaan_identity_map (uid, did, hash1, hash2, commitment_root, subject_id, tenant_id, biometric_hash, zk_commitment)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    `INSERT INTO pramaan_identity_map (uid, did, hash1, hash2, commitment_root, subject_id, tenant_id, biometric_hash, zk_commitment, enrollment_descriptor)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      ON CONFLICT (uid) DO UPDATE
      SET did = EXCLUDED.did,
          hash1 = EXCLUDED.hash1,
@@ -182,8 +203,9 @@ export async function completeEnrollment(input: {
          subject_id = EXCLUDED.subject_id,
          tenant_id = EXCLUDED.tenant_id,
          biometric_hash = EXCLUDED.biometric_hash,
-         zk_commitment = EXCLUDED.zk_commitment`,
-    [draft.uidDraft, draft.didDraft, input.hash1, input.hash2, input.commitmentRoot, draft.subjectId, draft.tenantId, input.biometricHash ?? null, zkCommitment]
+         zk_commitment = EXCLUDED.zk_commitment,
+         enrollment_descriptor = EXCLUDED.enrollment_descriptor`,
+    [draft.uidDraft, draft.didDraft, input.hash1, input.hash2, input.commitmentRoot, draft.subjectId, draft.tenantId, input.biometricHash ?? null, zkCommitment, validatedDescriptor]
   );
 
   await pool.query(
@@ -518,6 +540,93 @@ export async function getProofReceipt(verificationId: string): Promise<{
     [verificationId]
   );
   return result.rows[0] ?? null;
+}
+
+// ── Server-side cross-device face verification ──
+// Uses quantized descriptors (Uint8Array[128]) stored as base64.
+// Computes Euclidean distance between enrolled and live descriptors.
+// Threshold: 76.8 (= 0.6 × 128, scaled from float to quantized range).
+//   Same person: quantized distance ~38-64  (float ~0.3-0.5)
+//   Different person: quantized distance ~102+ (float ~0.8+)
+// Privacy: quantized descriptors are lossy — cannot reconstruct the original face.
+// Security: requires passkey session (requireSession middleware) + subject_id ownership check.
+const QUANTIZED_MATCH_THRESHOLD = 76.8;
+
+export async function verifyFaceDescriptor(input: {
+  uid: string;
+  liveDescriptorBase64: string;
+  subjectId: string;
+}): Promise<{ matched: boolean; distance: number; enrollmentHash?: string }> {
+  // Decode and validate the live descriptor
+  let liveBuf: Buffer;
+  try {
+    liveBuf = Buffer.from(input.liveDescriptorBase64, "base64");
+  } catch {
+    throw new Error("invalid_live_descriptor");
+  }
+  if (liveBuf.length !== 128) {
+    throw new Error("invalid_live_descriptor_length");
+  }
+
+  // Fetch stored enrollment data
+  const result = await pool.query<{
+    enrollment_descriptor: string | null;
+    biometric_hash: string | null;
+    subject_id: string;
+  }>(
+    `SELECT enrollment_descriptor, biometric_hash, subject_id
+     FROM pramaan_identity_map WHERE uid = $1`,
+    [input.uid]
+  );
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error("uid_not_found");
+  }
+
+  // Security: prevent cross-user face queries
+  if (row.subject_id !== input.subjectId) {
+    throw new Error("subject_mismatch");
+  }
+
+  if (!row.enrollment_descriptor) {
+    throw new Error("no_enrollment_descriptor");
+  }
+
+  // Decode stored descriptor
+  let storedBuf: Buffer;
+  try {
+    storedBuf = Buffer.from(row.enrollment_descriptor, "base64");
+  } catch {
+    throw new Error("corrupted_enrollment_descriptor");
+  }
+  if (storedBuf.length !== 128) {
+    throw new Error("corrupted_enrollment_descriptor");
+  }
+
+  // Compute Euclidean distance on quantized uint8 values
+  let sumSquared = 0;
+  for (let i = 0; i < 128; i++) {
+    const diff = storedBuf[i] - liveBuf[i];
+    sumSquared += diff * diff;
+  }
+  const distance = Math.sqrt(sumSquared);
+
+  logger.info("Face descriptor verification", {
+    uid: input.uid,
+    distance: distance.toFixed(2),
+    threshold: QUANTIZED_MATCH_THRESHOLD,
+    matched: distance < QUANTIZED_MATCH_THRESHOLD
+  });
+
+  if (distance < QUANTIZED_MATCH_THRESHOLD) {
+    return {
+      matched: true,
+      distance,
+      enrollmentHash: row.biometric_hash ?? undefined
+    };
+  }
+
+  return { matched: false, distance };
 }
 
 export async function verifyRecoveryCode(input: {

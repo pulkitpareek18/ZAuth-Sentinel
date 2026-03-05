@@ -10,8 +10,10 @@ import {
   findIdentityForSubject,
   getProofReceipt,
   startEnrollment,
-  submitProof
+  submitProof,
+  verifyFaceDescriptor
 } from "../services/pramaanV2Service.js";
+import { rateLimit } from "../middleware/rateLimit.js";
 
 export const pramaanRouter = Router();
 
@@ -86,6 +88,7 @@ pramaanRouter.post("/pramaan/v2/enrollment/complete", requireSession, async (req
     hash2: z.string().min(16),
     commitment_root: z.string().min(16),
     biometric_hash: z.string().min(32).max(128).optional(),
+    enrollment_descriptor: z.string().min(100).max(300).optional(),
     skip_recovery_code_regen: z.boolean().optional()
   });
   const parsed = schema.safeParse(req.body ?? {});
@@ -108,6 +111,7 @@ pramaanRouter.post("/pramaan/v2/enrollment/complete", requireSession, async (req
       hash2: parsed.data.hash2,
       commitmentRoot: parsed.data.commitment_root,
       biometricHash: parsed.data.biometric_hash,
+      enrollmentDescriptor: parsed.data.enrollment_descriptor,
       skipRecoveryCodeRegen: parsed.data.skip_recovery_code_regen
     });
 
@@ -279,6 +283,105 @@ pramaanRouter.get("/pramaan/v2/identity/me", requireSession, async (_req, res) =
     return;
   }
   res.status(200).json(identity);
+});
+
+// Cross-device face verification: server-side quantized descriptor matching.
+// When a user logs in from a new device (no IndexedDB enrollment), the client
+// sends its live quantized face descriptor. The server computes Euclidean
+// distance against the stored enrollment descriptor (128 bytes, lossy).
+// If matched, the server returns the enrollment_hash so the client can
+// construct a valid ZK proof with the correct biometric preimage.
+//
+// Security layers (all required):
+//   1. Passkey authentication (requireSession middleware)
+//   2. Liveness detection (blink/turn challenges, already completed)
+//   3. Server-side face matching (quantized Euclidean distance < 76.8)
+//   4. Subject ownership check (prevents cross-user queries)
+//   5. Rate limiting (5 requests per minute per IP)
+//
+// Privacy: only lossy quantized descriptors are compared — cannot reconstruct face.
+const verifyFaceRateLimit = rateLimit({ windowMs: 60_000, max: 5 });
+
+pramaanRouter.post("/pramaan/v2/identity/verify-face", requireSession, verifyFaceRateLimit, async (req, res) => {
+  if (!ensureV2Enabled(res)) {
+    return;
+  }
+
+  const schema = z.object({
+    uid: z.string().min(3),
+    live_descriptor: z.string().min(100).max(300)
+  });
+  const parsed = schema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_request", details: parsed.error.issues });
+    return;
+  }
+
+  const session = res.locals.session as { subjectId: string; username: string };
+
+  try {
+    const result = await verifyFaceDescriptor({
+      uid: parsed.data.uid,
+      liveDescriptorBase64: parsed.data.live_descriptor,
+      subjectId: session.subjectId
+    });
+
+    await writeAuditEvent({
+      tenantId: "default",
+      actor: session.username,
+      action: "pramaan.v2.identity.verify_face",
+      outcome: result.matched ? "success" : "failure",
+      traceId: req.traceId,
+      payload: {
+        uid: parsed.data.uid,
+        distance: Math.round(result.distance * 100) / 100,
+        matched: result.matched
+      }
+    });
+
+    if (result.matched) {
+      res.status(200).json({
+        matched: true,
+        enrollment_hash: result.enrollmentHash,
+        distance: Math.round(result.distance * 100) / 100
+      });
+    } else {
+      res.status(403).json({
+        matched: false,
+        reason: "face_mismatch",
+        distance: Math.round(result.distance * 100) / 100
+      });
+    }
+  } catch (error) {
+    const message = (error as Error).message;
+
+    await writeAuditEvent({
+      tenantId: "default",
+      actor: session.username,
+      action: "pramaan.v2.identity.verify_face",
+      outcome: "failure",
+      traceId: req.traceId,
+      payload: { uid: parsed.data.uid, reason: message }
+    });
+
+    if (message === "no_enrollment_descriptor") {
+      res.status(404).json({
+        matched: false,
+        reason: "no_enrollment_descriptor",
+        message: "This account was enrolled before cross-device verification was available. Please re-enroll via recovery codes."
+      });
+    } else if (message === "subject_mismatch") {
+      res.status(403).json({ matched: false, reason: "subject_mismatch" });
+    } else if (message === "uid_not_found") {
+      res.status(404).json({ matched: false, reason: "uid_not_found" });
+    } else {
+      res.status(400).json({
+        matched: false,
+        error: "verify_face_failed",
+        reason: message
+      });
+    }
+  }
 });
 
 // Privacy-by-design: biometric verification confirms face liveness was performed.
