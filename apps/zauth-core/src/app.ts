@@ -31,7 +31,8 @@ export function createApp(): express.Express {
           workerSrc: ["'self'", "blob:"],
           frameSrc: ["'none'"],
           objectSrc: ["'none'"],
-          baseUri: ["'self'"]
+          baseUri: ["'self'"],
+          formAction: ["'self'", new URL(config.notesRedirectUri).origin, new URL(config.demoRedirectUri).origin]
         }
       }
     })
