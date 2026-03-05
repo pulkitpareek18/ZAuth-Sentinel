@@ -75,6 +75,7 @@ function layout(title: string, body: string): string {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" href="data:image/svg+xml,<svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'><rect x='2' y='2' width='20' height='20' rx='6' fill='%234285F4'/><path d='M7.25 7.75H16.75L7.25 16.25H16.75' stroke='white' stroke-width='2.1' stroke-linecap='round' stroke-linejoin='round'/></svg>" />
 <title>${title}</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto:wght@400;500;700&display=swap');
