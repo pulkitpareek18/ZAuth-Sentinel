@@ -2182,6 +2182,19 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
         }
       }
 
+      // During signup, the live capture IS the enrollment. Set enrollmentHash
+      // so that runAuthenticationProof() includes biometric_hash in the submit
+      // body — the server requires it to match the stored enrollment hash.
+      if (lastFaceEmbedding && lastFaceEmbedding.hash) {
+        lastFaceEmbedding.enrollmentHash = lastFaceEmbedding.hash;
+        log('Set enrollmentHash for subsequent proof submission');
+      }
+
+      // Clear the enrollment draft — it was consumed by the server (deleted from Redis).
+      // This prevents retry attempts from re-calling completeEnrollment with a stale
+      // enrollment_id (which would fail with "enrollment_not_found").
+      enrollmentDraft = null;
+
       if (data.recovery_codes && data.recovery_codes.length) {
         signupRecoveryCodes = data.recovery_codes;
       }
@@ -2225,13 +2238,13 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
           throw new Error('Passkey registration failed.');
         }
 
-        setStatus('Account created. Signing in...');
+        setStatus('Passkey secured. Preparing face verification...');
         await signInWithPasskey(username);
         await startV2Enrollment(username);
         accountComplete = true;
         signupMode = false;
         await trackStep('signup', 'completed');
-        setStatus('Account ready. Continue with face verification.');
+        setStatus('Complete face verification to finish account setup.');
         showPanel('face');
       } catch (error) {
         await trackStep('signup', 'error', String(error?.message || 'create_account_failed'));

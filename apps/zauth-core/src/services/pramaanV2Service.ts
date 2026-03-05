@@ -280,6 +280,14 @@ export async function completeEnrollment(input: {
     hash_alg: "sha256"
   });
 
+  // Mark the user as fully enrolled. Account creation happens during passkey
+  // registration (before face verification), so the enrolled flag gates login
+  // access — unenrolled users cannot authenticate until this step completes.
+  await pool.query(
+    `UPDATE users SET enrolled = TRUE WHERE subject_id = $1`,
+    [draft.subjectId]
+  );
+
   await deleteEnrollment(draft.enrollmentId);
 
   return {

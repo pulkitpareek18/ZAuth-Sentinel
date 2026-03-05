@@ -57,6 +57,16 @@ const migrations: Migration[] = [
     sql: `
       ALTER TABLE pramaan_identity_map ADD COLUMN IF NOT EXISTS enrollment_descriptor TEXT;
     `
+  },
+  {
+    id: "007",
+    name: "add_user_enrolled_flag",
+    sql: `
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS enrolled BOOLEAN NOT NULL DEFAULT FALSE;
+      UPDATE users u SET enrolled = TRUE WHERE EXISTS (
+        SELECT 1 FROM pramaan_identity_map p WHERE p.subject_id = u.subject_id
+      );
+    `
   }
 ];
 

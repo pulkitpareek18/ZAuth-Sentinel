@@ -24,7 +24,7 @@ import {
   finishPasskeyRegistration
 } from "../services/passkeyService.js";
 import { getProofReceipt, verifyRecoveryCode, consumeRecoveryCode, consumeRecoveryCodes, revokeAllCredentialsForSubject, findUidForSubject, verifyMultipleRecoveryCodes } from "../services/pramaanV2Service.js";
-import { findUserBySubject } from "../services/userService.js";
+import { findUserBySubject, findUserByUsername } from "../services/userService.js";
 import { getCache } from "../services/cacheService.js";
 import { randomId } from "../utils/crypto.js";
 import { clearSessionCookie, createSession, deleteSession, getSession, setSessionCookie } from "../services/sessionService.js";
@@ -178,8 +178,12 @@ passkeyRouter.post("/auth/webauthn/login/verify", authLimiter, async (req, res) 
     payload: { requestId: parsed.data.requestId }
   });
 
+  // Include enrolled status so the UI can show appropriate messaging.
+  // During signup, enrolled=false until face verification + enrollment completes.
+  const loginUser = await findUserByUsername(result.username);
   res.status(200).json({
     verified: true,
+    enrolled: loginUser?.enrolled ?? false,
     redirectTo: parsed.data.requestId ? `/ui/consent?request_id=${encodeURIComponent(parsed.data.requestId)}` : "/"
   });
 });
@@ -396,6 +400,18 @@ passkeyRouter.post("/auth/handoff/approve", async (req, res) => {
   const session = await getSession(sid);
   if (!session) {
     res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+
+  // Enrollment gate: account must have completed face verification + ZK enrollment.
+  // User accounts are created during passkey registration (before face verification),
+  // but are not considered "enrolled" until completeEnrollment() succeeds.
+  const approveUser = await findUserBySubject(session.subjectId);
+  if (!approveUser?.enrolled) {
+    res.status(403).json({
+      error: "enrollment_incomplete",
+      message: "Account setup incomplete. Please complete face verification first."
+    });
     return;
   }
 

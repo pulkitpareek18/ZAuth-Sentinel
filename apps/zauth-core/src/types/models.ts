@@ -12,6 +12,7 @@ export type UserPrincipal = {
   tenant_id: string;
   username: string;
   display_name: string;
+  enrolled: boolean;
   created_at: string;
 };
 
