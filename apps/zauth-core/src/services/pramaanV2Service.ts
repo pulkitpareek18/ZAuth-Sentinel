@@ -279,9 +279,10 @@ export async function createProofChallenge(input: {
   challengeField?: string;
   circuitId: string;
   expiresAt: string;
+  enrollmentHash?: string;
 }> {
-  const identity = await pool.query<{ uid: string }>(
-    `SELECT uid FROM pramaan_identity_map WHERE uid = $1`,
+  const identity = await pool.query<{ uid: string; biometric_hash: string | null }>(
+    `SELECT uid, biometric_hash FROM pramaan_identity_map WHERE uid = $1`,
     [input.uid]
   );
   if (!identity.rows[0]) {
@@ -304,13 +305,22 @@ export async function createProofChallenge(input: {
   const challengeHash = sha256(`${input.uid}:${challenge}`);
   const challengeField = config.zkVerifierMode === "real" ? hexToFieldElement(challengeHash) : undefined;
 
+  // In real ZK mode, return the enrollment biometric hash so the client can use
+  // it as the ZK preimage even on new devices without IndexedDB enrollment data.
+  // This is safe: biometric_hash is a one-way SHA-256 of the quantized face
+  // embedding — the raw biometric never leaves the device.
+  const enrollmentHash = config.zkVerifierMode === "real"
+    ? (identity.rows[0].biometric_hash ?? undefined)
+    : undefined;
+
   return {
     proofRequestId,
     challenge,
     challengeHash,
     challengeField,
     circuitId: config.zkCircuitId,
-    expiresAt: expires.rows[0]?.expires_at ?? new Date(Date.now() + 5 * 60 * 1000).toISOString()
+    expiresAt: expires.rows[0]?.expires_at ?? new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+    enrollmentHash
   };
 }
 

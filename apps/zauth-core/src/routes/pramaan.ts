@@ -176,7 +176,8 @@ pramaanRouter.post("/pramaan/v2/proof/challenge", async (req, res) => {
       challenge_field: challenge.challengeField,
       circuit_id: challenge.circuitId,
       zk_mode: config.zkVerifierMode,
-      expires_at: challenge.expiresAt
+      expires_at: challenge.expiresAt,
+      enrollment_hash: challenge.enrollmentHash
     });
   } catch (error) {
     res.status(404).json({

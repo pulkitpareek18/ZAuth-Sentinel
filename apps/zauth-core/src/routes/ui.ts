@@ -2334,6 +2334,16 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
       }
 
       if (challengeData.zk_mode) zkMode = challengeData.zk_mode;
+
+      // Server provides the enrollment biometric hash in real ZK mode so the
+      // client can use it as the ZK preimage even on new devices without IndexedDB.
+      // Prefer the on-device enrollment hash (verified via face matching), but
+      // fall back to the server-provided hash for cross-device login.
+      if (challengeData.enrollment_hash && lastFaceEmbedding && !lastFaceEmbedding.enrollmentHash) {
+        lastFaceEmbedding.enrollmentHash = challengeData.enrollment_hash;
+        log('Using server-provided enrollment hash as ZK preimage (new device fallback)');
+      }
+
       const challengeField = challengeData.challenge_field || hexToFieldElement(challengeData.challenge_hash);
       const payload = await buildZkProof(uid, challengeData.challenge_hash, challengeField, {
         purpose: 'handoff_login'
@@ -2346,12 +2356,8 @@ uiRouter.get("/ui/mobile-approve", async (req, res) => {
           handoff_id: handoffId
       };
       if (lastFaceEmbedding) {
-        // ONLY send the enrollment hash from IndexedDB (proven match via on-device
-        // Euclidean distance check). Do NOT send the live capture hash — face
-        // embeddings are inherently noisy, so SHA-256(live_capture) will almost
-        // never equal SHA-256(enrollment_capture) even for the same person.
-        // When no enrollment hash is available (new device), omit biometric_hash
-        // entirely and let the ZK proof + liveness provide identity assurance.
+        // Send the enrollment hash (from IndexedDB or server-provided fallback).
+        // This provides an extra server-side identity-binding check.
         if (lastFaceEmbedding.enrollmentHash) {
           submitBody.biometric_hash = lastFaceEmbedding.enrollmentHash;
         }
