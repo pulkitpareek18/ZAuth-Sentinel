@@ -4033,18 +4033,26 @@ uiRouter.get("/ui/consent", async (req, res) => {
           <input type="hidden" name="request_id" value="${escapeHtml(requestId)}" />
           <input type="hidden" name="_consent_payload" value="${escapeHtml(consentPayload)}" />
           <input type="hidden" name="_consent_sig" value="${consentSig}" />
+          <input type="hidden" name="decision" id="decision-field" value="deny" />
           <div class="actions">
-            <button class="secondary" name="decision" value="deny" type="submit">Cancel</button>
-            <button class="primary" name="decision" value="allow" type="submit">Continue</button>
+            <button class="secondary" data-decision="deny" type="submit">Cancel</button>
+            <button class="primary" data-decision="allow" type="submit">Continue</button>
           </div>
         </form>
         <script>
-          document.getElementById('consent-form').addEventListener('submit', function(e) {
-            if (this.dataset.submitted) { e.preventDefault(); return; }
-            this.dataset.submitted = '1';
-            var btns = this.querySelectorAll('button[type="submit"]');
-            for (var i = 0; i < btns.length; i++) { btns[i].disabled = true; btns[i].style.opacity = '0.6'; }
-          });
+          (function() {
+            var form = document.getElementById('consent-form');
+            var field = document.getElementById('decision-field');
+            var btns = form.querySelectorAll('button[type="submit"]');
+            for (var i = 0; i < btns.length; i++) {
+              btns[i].addEventListener('click', function() { field.value = this.getAttribute('data-decision'); });
+            }
+            form.addEventListener('submit', function(e) {
+              if (this.dataset.submitted) { e.preventDefault(); return; }
+              this.dataset.submitted = '1';
+              for (var j = 0; j < btns.length; j++) { btns[j].disabled = true; btns[j].style.opacity = '0.6'; }
+            });
+          })();
         </script>
 
         <form method="post" action="/auth/logout">
