@@ -192,24 +192,21 @@ export async function verifyZkProof(input: {
       };
     }
 
-    // Biometric commitment binding is mandatory — ensures the proof was generated
+    // Biometric commitment binding: ensures the proof was generated
     // with the same biometric hash that was used during enrollment.
-    if (!input.expectedCommitment) {
-      return {
-        verified: false,
-        reason: "commitment_required",
-        publicSignalsHash: signalsHash,
-        mode: config.zkVerifierMode
-      };
-    }
-    const proofCommitment = String(normalizedSignals[0]);
-    if (proofCommitment !== input.expectedCommitment) {
-      return {
-        verified: false,
-        reason: "commitment_mismatch",
-        publicSignalsHash: signalsHash,
-        mode: config.zkVerifierMode
-      };
+    // During enrollment, expectedCommitment is not yet available (it's being
+    // created), so this check only applies during authentication when we
+    // have a stored commitment to compare against.
+    if (input.expectedCommitment) {
+      const proofCommitment = String(normalizedSignals[0]);
+      if (proofCommitment !== input.expectedCommitment) {
+        return {
+          verified: false,
+          reason: "commitment_mismatch",
+          publicSignalsHash: signalsHash,
+          mode: config.zkVerifierMode
+        };
+      }
     }
 
     return {
