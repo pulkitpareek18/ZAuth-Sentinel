@@ -32,24 +32,25 @@ Z Auth combines WebAuthn passkeys, face-based liveness verification, and Groth16
 - **Cross-Device ZK Authentication** — Enrollment hash is securely provided during authentication challenges, enabling seamless ZK proof generation on new devices without local biometric storage.
 - **WebAuthn Passkeys** — FIDO2 discoverable credentials eliminate passwords. No server-side secrets, no phishing vectors.
 - **Standards-Compliant OIDC** — Full OAuth 2.0 Authorization Code flow with PKCE (S256), token refresh, revocation, and a signed JWKS endpoint.
-- **Blockchain Audit Anchoring** — Hash-chained audit events with optional Merkle root anchoring to Polygon and metadata pinning to IPFS.
+- **On-Chain ZK Verification (Base L2)** — Every enrollment and verification is submitted directly to a Groth16 verifier contract on Base Sepolia. Identity commitments are stored immutably on-chain with full proof verification.
+- **Blockchain Audit Anchoring** — Hash-chained audit events with optional Merkle root anchoring and metadata pinning to IPFS.
 - **Single-VPS Deployment** — Runs on a single 2 vCPU / 8 GB VM behind Caddy with automatic TLS.
 
 ## How It Works
 
 ```
-User Device                           Z Auth Server                   Blockchain
-┌──────────────────┐                 ┌──────────────────┐            ┌──────────┐
-│ 1. Face capture   │                │                  │            │          │
-│ 2. Client-side    │  SHA-256 hash  │ Verify biometric │  Merkle   │ Polygon  │
-│    embedding +    ├───────────────>│ commitment       │  root     │ Amoy     │
-│    face matching  │                │                  ├──────────>│ Contract │
-│ 3. Groth16 proof  │  ZK proof +   │ groth16.verify() │            │          │
-│    generation     │  public signals│ Poseidon check   │  Metadata │          │
-│ 4. Passkey sign   ├───────────────>│                  ├──────────>│ IPFS     │
-│                   │                │ Issue OIDC tokens│            │ (Pinata) │
-│                   │<───────────────┤                  │            │          │
-└──────────────────┘  access_token   └──────────────────┘            └──────────┘
+User Device                           Z Auth Server                   Base L2 (Sepolia)
+┌──────────────────┐                 ┌──────────────────┐            ┌───────────────────┐
+│ 1. Face capture   │                │                  │            │ ZAuthIdentity.sol  │
+│ 2. Client-side    │  SHA-256 hash  │ Verify biometric │  Enroll   │ + Groth16Verifier  │
+│    embedding +    ├───────────────>│ commitment       ├──────────>│                   │
+│    face matching  │                │                  │  Verify   │ On-chain ZK proof  │
+│ 3. Groth16 proof  │  ZK proof +   │ groth16.verify() ├──────────>│ verification +     │
+│    generation     │  public signals│ Poseidon check   │            │ identity storage   │
+│ 4. Passkey sign   ├───────────────>│                  │            │                   │
+│                   │                │ Issue OIDC tokens│            │                   │
+│                   │<───────────────┤                  │            │                   │
+└──────────────────┘  access_token   └──────────────────┘            └───────────────────┘
                       id_token
 ```
 
@@ -74,7 +75,7 @@ apps/
 │   │   ├── biometric_commitment.wasm      # Client-side witness generator
 │   │   ├── circuit_final.zkey             # Proving key (client-side)
 │   │   └── verification_key.json          # Verification key (server-side)
-│   ├── contracts/           # ZAuthAnchor.sol — Polygon Amoy smart contract
+│   ├── contracts/           # ZAuthIdentity.sol (Base Sepolia) + ZAuthAnchor.sol
 │   └── assets/              # Static assets (logo, fonts)
 ├── zauth-ui/                # Admin console + status dashboard
 └── zauth-notes/             # Reference relying-party app (OAuth client)
@@ -99,7 +100,8 @@ docker/
 | **Biometrics** | face-api.js (client-side only), SHA-256 commitments |
 | **Zero-Knowledge** | Circom 2.1.9, Groth16 via snarkjs, Poseidon hash |
 | **Identity Protocol** | OAuth 2.0 / OpenID Connect with PKCE S256 |
-| **Blockchain** | Polygon Amoy, Solidity 0.8.24, ethers.js v6 |
+| **Blockchain** | Base Sepolia (L2), Solidity 0.8.24, ethers.js v6 |
+| **On-Chain Verification** | Groth16Verifier.sol — ZK proof verification directly on Base |
 | **Storage** | IPFS via Pinata REST API |
 | **Backend** | Node.js 20, Express, TypeScript |
 | **Frontend** | React 18, Vite, CSS design tokens (light + dark mode) |
@@ -250,7 +252,8 @@ const user = await client.getUserInfo(tokens.access_token);
 | **Zero-knowledge identity proofs** | Groth16 circuit with Poseidon commitment binding |
 | **No passwords** | WebAuthn discoverable credentials (passkeys) |
 | **Cross-device ZK support** | Enrollment hash provided in challenge for new-device authentication |
-| **Tamper-evident audit trail** | SHA-256 hash-chained events, blockchain-anchorable |
+| **On-chain ZK verification** | Groth16 proofs verified on Base Sepolia via `ZAuthIdentity.sol` |
+| **Tamper-evident audit trail** | SHA-256 hash-chained events, on-chain proof events (`ProofVerified`) |
 | **Nullifier-based consumption** | Recovery codes and proof requests use insert-only nullifiers |
 | **PKCE S256 enforced** | All OAuth flows require proof key for code exchange |
 | **Container hardening** | Read-only filesystem, memory limits, Trivy scanning |
@@ -288,17 +291,27 @@ make release
 | `deploy-demo.yml` | Manual | Deploy to demo environment |
 | `deploy-prod.yml` | Push to main / tag | Build, deploy to VPS, smoke test |
 
-## Blockchain Anchoring
+## On-Chain Identity (Base L2)
 
-Identity commitments are batched on a configurable interval (default: 24 hours):
+Every enrollment and verification is submitted directly to the **Base Sepolia** L2 chain. The `ZAuthIdentity.sol` contract inherits a Groth16 verifier generated from the ZK circuit, enabling full on-chain proof verification.
 
-1. Collect new identity commitments since the last batch
-2. Build a Merkle tree from commitment roots and the latest audit hash
-3. Submit the Merkle root to `ZAuthAnchor.sol` on Polygon Amoy
-4. Pin batch metadata to IPFS via Pinata
-5. Store the batch record with transaction hash and IPFS CID
+### How It Works
 
-Contract: [`0xAF5EA0320B7e9Ef0b5A8f6307d73af8652A03c52`](https://amoy.polygonscan.com/address/0xAF5EA0320B7e9Ef0b5A8f6307d73af8652A03c52)
+1. **Enrollment** — When a user enrolls, their ZK proof is verified on-chain via `enrollIdentity()`. The contract stores the identity commitment (Poseidon hash), commitment root, and version.
+2. **Verification** — During login, the ZK proof is submitted to `verifyAndLog()`, which re-verifies the proof on-chain and emits a `ProofVerified` event for an immutable audit trail.
+3. **Identity Lookup** — `getIdentity()` is a free view call that retrieves the on-chain identity record for cross-device verification.
+
+### Smart Contracts
+
+| Contract | Chain | Purpose |
+|----------|-------|---------|
+| `ZAuthIdentity.sol` | Base Sepolia | On-chain identity registry + Groth16 proof verification |
+| `Groth16Verifier.sol` | Base Sepolia | Auto-generated BN128 verifier (inherited by ZAuthIdentity) |
+| `ZAuthAnchor.sol` | Polygon Amoy | Merkle root anchoring for batched audit events |
+
+**Identity Contract**: [`0x34E3dd36326B8360B161Cd8DEc33f71821E33797`](https://sepolia.basescan.org/address/0x34E3dd36326B8360B161Cd8DEc33f71821E33797)
+
+> On-chain calls are non-blocking — if the chain is temporarily unavailable, enrollment and login succeed off-chain and the chain transaction is recorded when available.
 
 ## Patent
 
