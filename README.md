@@ -307,11 +307,7 @@ Every enrollment and verification is submitted directly to the **Base Sepolia** 
 |----------|-------|---------|
 | `ZAuthIdentity.sol` | Base Sepolia | On-chain identity registry + Groth16 proof verification |
 | `Groth16Verifier.sol` | Base Sepolia | Auto-generated BN128 verifier (inherited by ZAuthIdentity) |
-| `ZAuthAnchor.sol` | Polygon Amoy | Merkle root anchoring for batched audit events |
-
 **Identity Contract**: [`0x34E3dd36326B8360B161Cd8DEc33f71821E33797`](https://sepolia.basescan.org/address/0x34E3dd36326B8360B161Cd8DEc33f71821E33797)
-
-> On-chain calls are non-blocking — if the chain is temporarily unavailable, enrollment and login succeed off-chain and the chain transaction is recorded when available.
 
 ## Patent
 
