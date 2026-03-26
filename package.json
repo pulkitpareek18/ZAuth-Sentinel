@@ -7,6 +7,7 @@
     "apps/zauth-core",
     "apps/zauth-ui",
     "apps/zauth-notes",
+    "apps/zauth-sentinel",
     "packages/sdk"
   ],
   "scripts": {
@@ -14,6 +15,7 @@
     "dev:core": "npm run dev --workspace apps/zauth-core",
     "dev:ui": "npm run dev --workspace apps/zauth-ui",
     "dev:notes": "npm run dev --workspace apps/zauth-notes",
+    "dev:sentinel": "npm run dev --workspace apps/zauth-sentinel",
     "test": "npm run test --workspaces",
     "lint": "npm run lint --workspaces",
     "up-dev": "docker compose -p zauth_dev -f docker/compose.base.yml -f docker/compose.dev.yml --env-file env/.env.dev up",

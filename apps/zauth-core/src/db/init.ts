@@ -311,6 +311,18 @@ export async function initializeDatabase(): Promise<void> {
       ]
     );
 
+    await client.query(
+      `INSERT INTO oauth_clients (client_id, client_secret, redirect_uris, scopes, grant_types)
+       VALUES ($1, NULL, $2::jsonb, $3::jsonb, $4::jsonb)
+       ON CONFLICT (client_id) DO NOTHING`,
+      [
+        config.sentinelClientId,
+        JSON.stringify([config.sentinelRedirectUri, "http://localhost:3003/callback", "https://sentinel.geturstyle.shop/callback"]),
+        JSON.stringify(["openid", "profile", "email", "zauth.identity"]),
+        JSON.stringify(["authorization_code", "refresh_token"])
+      ]
+    );
+
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");

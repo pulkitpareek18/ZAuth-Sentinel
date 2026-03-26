@@ -36,3 +36,8 @@ status.geturstyle.shop {
   encode zstd gzip
   reverse_proxy zauth-ui:3001
 }
+
+sentinel.geturstyle.shop {
+  encode zstd gzip
+  reverse_proxy zauth-sentinel:3003
+}

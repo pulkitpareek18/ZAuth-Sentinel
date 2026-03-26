@@ -54,6 +54,21 @@ services:
       timeout: 4s
       retries: 6
 
+  zauth-sentinel:
+    image: ${ZAUTH_SENTINEL_IMAGE:-zauth_prod-zauth-sentinel}
+    pull_policy: ${PULL_POLICY:-never}
+    restart: always
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 1g
+    cpus: "0.35"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3003/health/live"]
+      interval: 20s
+      timeout: 4s
+      retries: 6
+
   caddy:
     image: caddy:2.10-alpine
     restart: always
@@ -63,6 +78,8 @@ services:
       zauth-ui:
         condition: service_healthy
       zauth-notes:
+        condition: service_healthy
+      zauth-sentinel:
         condition: service_healthy
     environment:
       CADDY_EMAIL: ${CADDY_EMAIL}

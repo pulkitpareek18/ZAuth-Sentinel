@@ -1,0 +1,123 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap");
+
+:root {
+  color-scheme: dark light;
+  --font-display: "Inter", "Segoe UI", Arial, sans-serif;
+  --font-body: "Inter", "Segoe UI", Arial, sans-serif;
+
+  --color-bg: #0b0e13;
+  --color-bg-accent: #131d1a;
+  --color-surface: #141820;
+  --color-surface-soft: #1a1f2b;
+  --color-surface-strong: #1e2a1e;
+  --color-text: #e8eaed;
+  --color-subtext: #94a3b8;
+  --color-muted: #64748b;
+  --color-line: #1e293b;
+  --color-line-strong: #334155;
+  --color-brand: #6b8a3d;
+  --color-brand-hover: #7fa04a;
+  --color-brand-soft: #1e2a1e;
+  --color-brand-line: #3a4f28;
+  --color-brand-text: #ffffff;
+  --color-success: #22c55e;
+  --color-success-soft: #14291e;
+  --color-danger: #ef4444;
+  --color-danger-soft: #2d1515;
+  --color-warning: #f59e0b;
+  --color-warning-soft: #2d2410;
+  --color-info: #3b82f6;
+  --color-info-soft: #172554;
+  --color-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+
+  --color-gradient-start: #6b8a3d;
+  --color-gradient-end: #d4a017;
+
+  --color-top-secret: #ef4444;
+  --color-secret: #f59e0b;
+  --color-confidential: #3b82f6;
+  --color-unclassified: #22c55e;
+
+  --color-flash: #ef4444;
+  --color-immediate: #f59e0b;
+  --color-priority: #3b82f6;
+  --color-routine: #64748b;
+
+  --radius-card: 16px;
+  --radius-panel: 12px;
+  --radius-md: 8px;
+  --radius-sm: 6px;
+  --radius-pill: 999px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --color-bg: #f0f2eb;
+    --color-bg-accent: #e4ebd8;
+    --color-surface: #ffffff;
+    --color-surface-soft: #f7f9f4;
+    --color-surface-strong: #e8f0e0;
+    --color-text: #1a1a1a;
+    --color-subtext: #475569;
+    --color-muted: #64748b;
+    --color-line: #d4d8c8;
+    --color-line-strong: #b8c0a8;
+    --color-brand: #4b5320;
+    --color-brand-hover: #5a6328;
+    --color-brand-soft: #e8f0e0;
+    --color-brand-line: #a3b07a;
+    --color-brand-text: #ffffff;
+    --color-success: #16a34a;
+    --color-success-soft: #dcfce7;
+    --color-danger: #dc2626;
+    --color-danger-soft: #fef2f2;
+    --color-warning: #d97706;
+    --color-warning-soft: #fef9c3;
+    --color-info: #2563eb;
+    --color-info-soft: #dbeafe;
+    --color-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: var(--font-body);
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+a {
+  color: inherit;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
