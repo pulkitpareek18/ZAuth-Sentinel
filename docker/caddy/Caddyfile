@@ -2,42 +2,42 @@
   email {$CADDY_EMAIL}
 }
 
-auth.geturstyle.shop {
+auth.zeroauth.tech {
   encode zstd gzip
   reverse_proxy zauth-core:3000
 }
 
-verify.geturstyle.shop {
+verify.zeroauth.tech {
   encode zstd gzip
   reverse_proxy zauth-core:3000
 }
 
-api.geturstyle.shop {
+api.zeroauth.tech {
   encode zstd gzip
   reverse_proxy zauth-core:3000
 }
 
-console.geturstyle.shop {
+console.zeroauth.tech {
   encode zstd gzip
   reverse_proxy zauth-ui:3001
 }
 
-demo.geturstyle.shop {
+demo.zeroauth.tech {
   encode zstd gzip
   reverse_proxy zauth-ui:3001
 }
 
-notes.geturstyle.shop {
+notes.zeroauth.tech {
   encode zstd gzip
   reverse_proxy zauth-notes:3002
 }
 
-status.geturstyle.shop {
+status.zeroauth.tech {
   encode zstd gzip
   reverse_proxy zauth-ui:3001
 }
 
-sentinel.geturstyle.shop {
+sentinel.zeroauth.tech {
   encode zstd gzip
   reverse_proxy zauth-sentinel:3003
 }

@@ -293,7 +293,7 @@ export async function initializeDatabase(): Promise<void> {
        ON CONFLICT (client_id) DO NOTHING`,
       [
         config.demoClientId,
-        JSON.stringify([config.demoRedirectUri, "http://localhost:3001/callback", "https://demo.geturstyle.shop/callback"]),
+        JSON.stringify([config.demoRedirectUri, "http://localhost:3001/callback", "https://demo.geturstyle.shop/callback", "https://demo.zeroauth.tech/callback"]),
         JSON.stringify(["openid", "profile", "email", "zauth.identity"]),
         JSON.stringify(["authorization_code", "refresh_token"])
       ]
@@ -305,7 +305,7 @@ export async function initializeDatabase(): Promise<void> {
        ON CONFLICT (client_id) DO NOTHING`,
       [
         config.notesClientId,
-        JSON.stringify([config.notesRedirectUri, "http://localhost:3002/callback", "https://notes.geturstyle.shop/callback"]),
+        JSON.stringify([config.notesRedirectUri, "http://localhost:3002/callback", "https://notes.geturstyle.shop/callback", "https://notes.zeroauth.tech/callback"]),
         JSON.stringify(["openid", "profile", "email", "zauth.identity"]),
         JSON.stringify(["authorization_code", "refresh_token"])
       ]
@@ -317,7 +317,7 @@ export async function initializeDatabase(): Promise<void> {
        ON CONFLICT (client_id) DO NOTHING`,
       [
         config.sentinelClientId,
-        JSON.stringify([config.sentinelRedirectUri, "http://localhost:3003/callback", "https://sentinel.geturstyle.shop/callback"]),
+        JSON.stringify([config.sentinelRedirectUri, "http://localhost:3003/callback", "https://sentinel.geturstyle.shop/callback", "https://sentinel.zeroauth.tech/callback"]),
         JSON.stringify(["openid", "profile", "email", "zauth.identity"]),
         JSON.stringify(["authorization_code", "refresh_token"])
       ]

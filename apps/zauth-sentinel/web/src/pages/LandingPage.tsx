@@ -520,13 +520,13 @@ export function LandingPage({ loginUrl, authError, authMessage }: LandingPagePro
           </div>
           <div className="footer-col">
             <h4>Platform</h4>
-            <a href="https://auth.geturstyle.shop" target="_blank" rel="noopener noreferrer">Z Auth</a>
+            <a href="https://auth.zeroauth.tech" target="_blank" rel="noopener noreferrer">Z Auth</a>
             <a href="https://github.com/pulkitpareek18/Z_Auth" target="_blank" rel="noopener noreferrer">GitHub</a>
-            <a href="https://auth.geturstyle.shop/.well-known/openid-configuration" target="_blank" rel="noopener noreferrer">OIDC Discovery</a>
+            <a href="https://auth.zeroauth.tech/.well-known/openid-configuration" target="_blank" rel="noopener noreferrer">OIDC Discovery</a>
           </div>
         </div>
         <div className="landing-footer-bottom">
-          <p>&copy; {new Date().getFullYear()} Sentinel &middot; Powered by <a href="https://auth.geturstyle.shop" target="_blank" rel="noopener noreferrer">Z Auth / Pramaan</a> &middot; Yushu Excellence Technologies</p>
+          <p>&copy; {new Date().getFullYear()} Sentinel &middot; Powered by <a href="https://auth.zeroauth.tech" target="_blank" rel="noopener noreferrer">Z Auth / Pramaan</a> &middot; Yushu Excellence Technologies</p>
         </div>
       </footer>
     </main>
