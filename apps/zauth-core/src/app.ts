@@ -32,7 +32,7 @@ export function createApp(): express.Express {
           frameSrc: ["'none'"],
           objectSrc: ["'none'"],
           baseUri: ["'self'"],
-          formAction: ["'self'", new URL(config.notesRedirectUri).origin, new URL(config.demoRedirectUri).origin]
+          formAction: ["'self'", new URL(config.notesRedirectUri).origin, new URL(config.demoRedirectUri).origin, new URL(config.sentinelRedirectUri).origin]
         }
       }
     })
