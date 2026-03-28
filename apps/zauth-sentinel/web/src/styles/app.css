@@ -140,6 +140,10 @@
 .preview-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--color-line-strong); }
 .preview-window-head p { margin: 0; font-size: 13px; font-weight: 600; color: var(--color-subtext); margin-left: 8px; }
 .preview-body { padding: var(--space-4); }
+.hero-video-body { padding: 0; }
+.hero-demo-video {
+  width: 100%; display: block; border-radius: 0 0 var(--radius-card) var(--radius-card);
+}
 .preview-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--space-3); margin-bottom: var(--space-4); }
 .preview-stat {
   padding: var(--space-3); border-radius: var(--radius-md);

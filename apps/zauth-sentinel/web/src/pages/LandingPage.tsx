@@ -231,46 +231,23 @@ export function LandingPage({ loginUrl, authError, authMessage }: LandingPagePro
             ) : null}
           </div>
 
-          <aside className="landing-hero-visual" aria-label="App preview">
+          <aside className="landing-hero-visual" aria-label="Demo video">
             <div className="hero-visual-wrapper">
-              <div className="preview-window">
+              <div className="preview-window hero-video-window">
                 <div className="preview-window-head">
                   <span className="preview-dot" /><span className="preview-dot" /><span className="preview-dot" />
-                  <p>Sentinel Dashboard</p>
+                  <p>Sentinel in Action</p>
                 </div>
-                <div className="preview-body">
-                  <div className="preview-stats">
-                    <div className="preview-stat">
-                      <div className="preview-stat-value">247</div>
-                      <div className="preview-stat-label">Personnel Verified</div>
-                    </div>
-                    <div className="preview-stat">
-                      <div className="preview-stat-value">98.4%</div>
-                      <div className="preview-stat-label">ZK Verification Rate</div>
-                    </div>
-                    <div className="preview-stat">
-                      <div className="preview-stat-value">52</div>
-                      <div className="preview-stat-label">Checkpoints Today</div>
-                    </div>
-                    <div className="preview-stat">
-                      <div className="preview-stat-value">18</div>
-                      <div className="preview-stat-label">Weapons Checked Out</div>
-                    </div>
-                  </div>
-                  <div className="preview-log">
-                    <div className="preview-log-item">
-                      <span className="preview-log-pass">PASS</span>
-                      <span>Col. Rathore verified at Gate Alpha</span>
-                    </div>
-                    <div className="preview-log-item">
-                      <span className="preview-log-flag">FLAG</span>
-                      <span>Hav. Gogoi flagged at Camp Delta</span>
-                    </div>
-                    <div className="preview-log-item">
-                      <span className="preview-log-pass">PASS</span>
-                      <span>Maj. Chauhan verified at Forward Post</span>
-                    </div>
-                  </div>
+                <div className="preview-body hero-video-body">
+                  <video
+                    className="hero-demo-video"
+                    src="/sentinel-demo.mp4"
+                    autoPlay
+                    loop
+                    muted
+                    playsInline
+                    preload="metadata"
+                  />
                 </div>
               </div>
               <div className="hero-shield-badge" aria-hidden="true">
