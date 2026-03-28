@@ -497,8 +497,9 @@
 
 /* ========== Responsive ========== */
 @media (max-width: 900px) {
-  .landing-hero-inner { grid-template-columns: 1fr; }
-  .landing-hero-visual { display: none; }
+  .landing-hero-inner { grid-template-columns: 1fr; gap: var(--space-6); }
+  .landing-hero-visual { order: -1; }
+  .hero-shield-badge { display: none; }
   .security-row { grid-template-columns: 1fr; }
   .security-row-reverse { direction: ltr; }
   .landing-footer-inner { grid-template-columns: 1fr; }
@@ -508,8 +509,57 @@
 }
 
 @media (max-width: 640px) {
+  /* Nav */
+  .landing-nav-links { display: none; }
+  .landing-nav-inner { padding: var(--space-2) var(--space-3); }
+  .nav-powered-badge { display: none; }
+  .landing-nav-cta { min-width: auto; padding: 6px 14px; font-size: 13px; }
+
+  /* Hero */
+  .landing-hero-section { padding: 24px var(--space-3) 32px; }
+  .landing-hero-inner { gap: var(--space-4); }
+  .landing-hero-content { gap: var(--space-3); }
+  .landing-hero-content h1 { font-size: 28px; line-height: 1.15; }
+  .lead { font-size: 15px; line-height: 1.5; }
+  .hero-badge { font-size: 11px; padding: 4px 10px; }
+  .hero-cta-row { flex-direction: column; }
+  .landing-hero-cta, .landing-hero-cta-alt { padding: 12px 20px; font-size: 15px; text-align: center; width: 100%; }
+  .hero-trust-line { font-size: 12px; text-align: center; }
+
+  /* Video */
+  .preview-window-head { padding: 8px 12px; }
+  .preview-window-head p { font-size: 12px; }
+  .preview-dot { width: 8px; height: 8px; }
+
+  /* Tech strip */
+  .tech-strip { flex-wrap: wrap; justify-content: center; gap: var(--space-3); }
+  .tech-strip-label { font-size: 11px; }
+
+  /* Pain points */
+  .pain-grid { grid-template-columns: 1fr !important; }
+
+  /* How it works */
   .how-steps { flex-direction: column; align-items: center; }
   .how-connector { transform: rotate(90deg); padding-top: 0; }
-  .landing-nav-links { display: none; }
+
+  /* Features */
+  .features-grid { grid-template-columns: 1fr !important; }
+
+  /* Section spacing */
+  .landing-pain-section,
+  .landing-how-section,
+  .landing-features-section,
+  .landing-bottom-cta-section { padding: 40px var(--space-3); }
+  .landing-tech-section { padding: var(--space-6) var(--space-3); }
+  .landing-security-section { padding: 40px var(--space-3); }
+  .landing-patent-section { padding: 32px var(--space-3); }
+  .section-header { margin-bottom: var(--space-6); }
+  .section-header h2 { font-size: 24px; }
+  .section-header p { font-size: 14px; }
+
+  /* Dashboard */
   .dashboard-stats { grid-template-columns: repeat(2, 1fr); }
+
+  /* Footer */
+  .landing-footer { padding: var(--space-6) var(--space-3); }
 }
